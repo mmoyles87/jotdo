@@ -36,8 +36,22 @@ public:
     // Deletes the reminder. Throws Conflict if it changed on the server since it was loaded.
     void remove(const Task& t);
 
-    // The events between `from` and `to` in the account's calendars, by start time.
+    // The events between `from` and `to` in the account's calendars, by start time; each
+    // occurrence of a repeating event separately.
     std::vector<Event> agenda(std::time_t from, std::time_t to);
+
+    // The calendars that hold events: the account's `calendars`, or every one the server has.
+    std::vector<Collection> calendars();
+    const Collection& calendar_named(const std::string& name);
+    const Collection& default_calendar();
+
+    // The events (whole series, as stored) whose UID is `uid` or starts with it.
+    std::vector<Event> find_events(const std::string& uid);
+
+    // Saves `e` into `calendar`, new or over the loaded version (moving it when the calendar
+    // changed). Throws Conflict if it changed on the server since it was loaded.
+    void save_event(Event& e, const Collection& calendar, std::time_t now);
+    void remove_event(const Event& e);
 
 private:
     Dav& dav_;

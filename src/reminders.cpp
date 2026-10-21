@@ -157,18 +157,97 @@ void Reminders::remove(const Task& t) {
     dav_.remove(t.href, t.etag);
 }
 
+std::vector<Collection> Reminders::calendars() {
+    discover();
+    std::vector<Collection> out;
+    const auto& wanted = dav_.account().calendars;
+    for (auto& c : all_)
+        if (c.events && (wanted.empty() || std::any_of(wanted.begin(), wanted.end(),
+                                                         [&](const std::string& n) { return lower(n) == lower(c.name); })))
+            out.push_back(c);
+    return out;
+}
+
+const Collection& Reminders::calendar_named(const std::string& name) {
+    discover();
+    for (auto& c : all_)
+        if (c.events && lower(c.name) == lower(name))
+            return c;
+    std::string names;
+    for (auto& c : calendars())
+        names += (names.empty() ? "" : ", ") + c.name;
+    throw std::runtime_error("no calendar named \"" + name + "\" (there are " + names + ")");
+}
+
+const Collection& Reminders::default_calendar() {
+    discover();
+    const std::string& name = dav_.account().default_calendar;
+    if (!name.empty())
+        return calendar_named(name);
+    for (auto& c : all_)
+        if (c.events && c.writable && lower(c.name) == "personal")
+            return c;
+    for (auto& c : all_)
+        if (c.events && c.writable)
+            return c;
+    throw std::runtime_error("the account has no calendar it can write to");
+}
+
+std::vector<Event> Reminders::find_events(const std::string& uid) {
+    std::vector<Event> out;
+    for (auto& c : calendars())
+        for (auto& r : dav_.find_uid(c, "VEVENT", uid)) {
+            auto events = parse_events(r.data);
+            if (events.empty())
+                continue;
+            Event e = events.front();
+            for (auto& x : events)  // the series' main event, not an exception
+                if (x.repeat.size() || !x.recurring) {
+                    e = x;
+                    break;
+                }
+            if (!e.uid.starts_with(uid) && e.uid != uid)
+                continue;  // text-match finds the UID anywhere in it; only prefixes count
+            e.calendar = c.name, e.calendar_href = c.href, e.color = c.color;
+            e.href = r.href, e.etag = r.etag, e.raw = r.data;
+            out.push_back(std::move(e));
+        }
+    return out;
+}
+
+void Reminders::save_event(Event& e, const Collection& calendar, std::time_t now) {
+    if (!calendar.writable)
+        throw std::runtime_error("the calendar \"" + calendar.name + "\" is read-only");
+    if (e.uid.empty())
+        e.uid = new_uid();
+    std::string ics = write_event(e, now);
+    bool moving = !e.href.empty() && e.calendar_href != calendar.href;
+    std::string href = e.href.empty() || moving ? href_for(calendar, e.uid) : e.href;
+    std::string etag = dav_.put(href, ics, e.href.empty() || moving ? "" : e.etag);
+    if (moving)
+        dav_.remove(e.href, e.etag);
+    if (etag.empty()) {
+        Resource r = dav_.get(href);
+        etag = r.etag, ics = r.data;
+    }
+    e.href = href, e.etag = etag, e.raw = ics;
+    e.calendar = calendar.name, e.calendar_href = calendar.href, e.color = calendar.color;
+}
+
+void Reminders::remove_event(const Event& e) {
+    if (!e.href.empty())
+        dav_.remove(e.href, e.etag);
+}
+
 std::vector<Event> Reminders::agenda(std::time_t from, std::time_t to) {
     discover();
     std::vector<Event> out;
-    const auto& wanted = dav_.account().calendars;
-    for (auto& c : all_) {
-        if (!c.events)
-            continue;
-        if (!wanted.empty() &&
-            std::none_of(wanted.begin(), wanted.end(), [&](const std::string& n) { return lower(n) == lower(c.name); }))
-            continue;
+    for (auto& c : calendars()) {
         for (auto& r : dav_.query(c, "VEVENT", from, to))
             for (auto& e : parse_events(r.data)) {
+                e.href = r.href;
+                e.etag = r.etag;
+                e.calendar_href = c.href;
                 if (e.end <= from && !(e.end == e.start && e.start >= from))
                     continue;
                 if (e.start >= to)

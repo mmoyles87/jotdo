@@ -45,17 +45,32 @@ std::string write_task(const Task& t, std::time_t now);
 bool advance(Task& t);
 
 struct Event {
+    std::string uid;
     std::string title;
     std::string location;
-    std::string calendar;  // the calendar's name
-    std::string color;
+    std::string notes;
     std::time_t start = 0;
-    std::time_t end = 0;
+    std::time_t end = 0;      // exclusive; for an all-day event, midnight after its last day
     bool all_day = false;
+    std::string repeat;       // the series' RRULE; empty when it does not repeat
+    bool recurring = false;   // one occurrence of a repeating event (or the series itself)
+    std::vector<int> alerts;  // minutes before the start
+
+    // Where it lives on the server.
+    std::string calendar;       // the calendar's name
+    std::string calendar_href;  // the calendar's URL
+    std::string color;
+    std::string href;  // the object's URL
+    std::string etag;
+    std::string raw;   // the whole object as loaded (the series, not one occurrence); empty when new
 };
 
 // Every VEVENT in `ics` (for an expanded query, each occurrence).
 std::vector<Event> parse_events(const std::string& ics);
+
+// `e` as an iCalendar object: `e.raw` with the fields above replaced in its main event (the one
+// without a RECURRENCE-ID) and everything else kept, or a new object when raw is empty.
+std::string write_event(const Event& e, std::time_t now);
 
 std::string new_uid();
 std::string local_tzid();  // the system's zone, "America/New_York"; "UTC" if unknown

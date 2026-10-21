@@ -17,6 +17,7 @@ struct Account {
     std::vector<std::string> lists;      // task lists to show, by name; empty: every list that holds tasks
     std::vector<std::string> calendars;  // calendars for the agenda, by name; empty: every one that holds events
     std::string default_list;            // where new reminders go; empty: the first list
+    std::string default_calendar;        // where new events go; empty: Personal, or the first writable one
 };
 
 struct Config {

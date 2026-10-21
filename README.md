@@ -15,7 +15,9 @@ a phone sees an edit made in jotdo as an edit.
 - A repeating reminder ticked off moves on to its next date; times stay put across daylight
   saving changes.
 - If a reminder changes elsewhere while you edit it, the save is refused and your text is kept.
-- Scriptable: `list`, `today`, `new`, `done`, `edit`, `rm` and `agenda` work without the UI.
+- Calendar events too: add, move and delete them on any of the account's calendars.
+- Scriptable: `list`, `today`, `new`, `set`, `done`, `edit`, `rm`, `agenda` and `event` work without the
+  UI, with `--json` output.
 
 ## Build
 
@@ -43,6 +45,7 @@ url = "https://cloud.example.com"                    # the server, or its DAV ad
 user = "me"
 password_command = "pass show cloud/app-password"    # first line of output is the password
 default_list = "Personal"                            # optional: where new reminders go
+# default_calendar = "Personal"                     # optional: where new events go
 # lists = ["Personal", "Family"]                     # optional: which lists, in this order
 # calendars = ["Family"]                             # optional: which calendars feed the agenda
 # ca_file = "~/certs/my-ca.pem"                      # optional: also trust this CA
@@ -70,7 +73,14 @@ jotdo done 3                           # tick off; a repeating one moves to its 
 jotdo edit 3                           # edit in $EDITOR (or: jotdo edit 3 < reminder.txt)
 jotdo rm 3
 jotdo agenda 3                         # events and reminders for the next 3 days
+jotdo events                           # calendar events, numbered, with their UIDs
+jotdo event new -s "sat 7pm" -f 90m -L Home Dinner
+jotdo event new -s "oct 30" -e "oct 31" -c Family Trip   # all day, through Oct 31
+jotdo event set 4 -s "sun 6pm"         # moves it, keeping its length
+jotdo event rm 4
 ```
+
+`--json` on any command prints JSON instead, for scripts and other tools.
 
 Numbers stay the same across `list`, `today` and `all` until the reminders change, so
 `jotdo done 3` means the third line of `jotdo all`. The start of a reminder's UID works too.

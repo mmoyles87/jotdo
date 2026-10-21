@@ -232,6 +232,33 @@ std::vector<Resource> Dav::query(const Collection& c, const std::string& compone
     return out;
 }
 
+std::vector<Resource> Dav::find_uid(const Collection& c, const std::string& component, const std::string& uid) {
+    std::string safe;
+    for (char ch : uid)
+        if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '-' || ch == '_' || ch == '.' || ch == '@')
+            safe += ch;
+    if (safe.empty())
+        return {};
+    std::string body = R"(<?xml version="1.0" encoding="utf-8"?>
+<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop><d:getetag/><c:calendar-data/></d:prop>
+  <c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name=")" + component + R"("><c:prop-filter name="UID"><c:text-match collation="i;ascii-casemap">)" + safe + R"(</c:text-match></c:prop-filter></c:comp-filter></c:comp-filter></c:filter>
+</c:calendar-query>)";
+    Response r = http_.request("REPORT", c.href, body, {PROPFIND_HEADERS[0], "Depth: 1"});
+    Multistatus ms;
+    parse_multistatus(r, "searching " + c.name, ms);
+    std::vector<Resource> out;
+    for (auto& resp : ms.responses) {
+        Resource res;
+        res.href = absolute(text_of(child(resp, "href")));
+        res.etag = text_of(find_prop(resp, "getetag"));
+        res.data = text_of(find_prop(resp, "calendar-data"));
+        if (!res.data.empty())
+            out.push_back(std::move(res));
+    }
+    return out;
+}
+
 std::string Dav::put(const std::string& href, const std::string& ics, const std::string& etag) {
     std::vector<std::string> headers{"Content-Type: text/calendar; charset=utf-8"};
     headers.push_back(etag.empty() ? "If-None-Match: *" : "If-Match: " + etag);

@@ -46,6 +46,9 @@ public:
     // those between `from` and `to`, with repeating ones expanded into their occurrences.
     std::vector<Resource> query(const Collection& c, const std::string& component, std::time_t from = 0, std::time_t to = 0);
 
+    // The objects with a `component` whose UID contains `uid` (a whole UID, or the start of one).
+    std::vector<Resource> find_uid(const Collection& c, const std::string& component, const std::string& uid);
+
     // Writes `ics` at `href`: over the version with `etag`, or as a new object when `etag` is
     // empty. Returns the new ETag (empty if the server did not say). Throws Conflict on 412.
     std::string put(const std::string& href, const std::string& ics, const std::string& etag);

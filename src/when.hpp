@@ -35,6 +35,9 @@ std::string describe_repeat(const std::string& rrule);  // "every Monday"; the R
 std::vector<int> parse_alerts(const std::string& text);
 std::string describe_alerts(const std::vector<int>& minutes);
 
+// A length: "1h", "90m", "1h30m", "2 hours", "1 day". Minutes; throws on anything else.
+int parse_duration(const std::string& text);
+
 // "high", "medium", "low", "none", or "!!!", "!!", "!". iCalendar's 1 (high), 5, 9 and 0 (none).
 int parse_priority(const std::string& text);
 std::string describe_priority(int priority);  // "high", "medium", "low", ""

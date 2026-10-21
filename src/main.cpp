@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -40,7 +41,12 @@ usage:
   jotdo [options] undone REMINDER          tick back on
   jotdo [options] rm REMINDER              delete
   jotdo [options] agenda [DAYS]            events and reminders for the coming days
-  jotdo [options] lists                    the account's lists
+  jotdo [options] lists                    the account's lists and calendars
+  jotdo [options] events [DAYS]            calendar events for the coming days, numbered
+  jotdo [options] event new [EFIELDS] TITLE
+  jotdo [options] event show EVENT
+  jotdo [options] event set EVENT EFIELDS  change only the fields given
+  jotdo [options] event rm EVENT           delete (a repeating event: the whole series)
 
 REMINDER is a number from `list`, `today` or `all`, or the start of a reminder's UID.
 
@@ -53,6 +59,19 @@ fields, for new and set:
   -p, --priority LEVEL   high, medium, low, none
   -n, --notes TEXT       replaces the notes; "" clears them
   -u, --url URL
+
+EVENT is a number from `events` or the start of an event's UID.
+
+fields, for event new and event set:
+  -t, --title TEXT       (set only)
+  -s, --start WHEN       as for --due; a date alone makes an all-day event
+  -e, --end WHEN         read relative to the start: 17:00, fri, in 2h; for all-day, the last day
+  -f, --for LENGTH       1h, 90m, 2 days (default 1h; all-day: 1 day)
+  -c, --calendar NAME    which calendar (new: the account's default_calendar, else Personal)
+  -L, --location TEXT
+  -n, --notes TEXT
+  -A, --alert WHEN       15m before, 1h before, 1d before; none
+  -r, --repeat RULE      weekly, every mon, ...; none
 
 options:
   -a, --account NAME     an account from the config (default: the config's `default`)
@@ -158,14 +177,27 @@ std::string json_task(const jotdo::Task& t, size_t n, std::time_t now) {
     return o + "}";
 }
 
-std::string json_event(const jotdo::Event& e) {
+std::string json_event(const jotdo::Event& e, size_t n = 0) {
+    std::string alerts = "[";
+    for (size_t k = 0; k < e.alerts.size(); ++k)
+        alerts += (k ? "," : "") + quote(jotdo::describe_alerts({e.alerts[k]}));
+    alerts += "]";
     std::string o = "{";
-    o += "\"title\":" + quote(e.title);
+    if (n)
+        o += "\"n\":" + std::to_string(n) + ",";
+    o += "\"uid\":" + quote(e.uid);
+    o += ",\"title\":" + quote(e.title);
     o += ",\"start\":" + quote(iso(e.start, !e.all_day));
-    o += ",\"end\":" + quote(iso(e.end, !e.all_day));
+    // an all-day event's end is exclusive in iCalendar; people mean the last day
+    o += ",\"end\":" + quote(iso(e.all_day && e.end > e.start ? e.end - 86400 : e.end, !e.all_day));
     o += ",\"all_day\":" + std::string(e.all_day ? "true" : "false");
     o += ",\"location\":" + (e.location.empty() ? "null" : quote(e.location));
+    o += ",\"notes\":" + (e.notes.empty() ? "null" : quote(e.notes));
     o += ",\"calendar\":" + quote(e.calendar);
+    o += ",\"repeating\":" + std::string(e.recurring ? "true" : "false");
+    if (!e.repeat.empty())
+        o += ",\"repeat\":" + quote(jotdo::describe_repeat(e.repeat));
+    o += ",\"alerts\":" + alerts;
     return o + "}";
 }
 
@@ -330,6 +362,107 @@ std::vector<std::string> apply_fields(const std::vector<std::string>& args, size
     return words;
 }
 
+// The field flags for event new and event set.
+std::vector<std::string> apply_event_fields(const std::vector<std::string>& args, size_t from, jotdo::Event& e,
+                                            std::string& calendar, jotdo::Reminders& r, std::time_t now, bool allow_title) {
+    std::vector<std::string> words;
+    std::optional<std::string> start_text, end_text, length_text;
+    bool all_day_flag = false;
+    for (size_t i = from; i < args.size(); ++i) {
+        const std::string& a = args[i];
+        auto value = [&]() -> std::string {
+            if (i + 1 >= args.size())
+                throw std::invalid_argument(a + " needs a value");
+            return args[++i];
+        };
+        if ((a == "-t" || a == "--title") && allow_title)
+            e.title = value();
+        else if (a == "-s" || a == "--start")
+            start_text = value();
+        else if (a == "-e" || a == "--end")
+            end_text = value();
+        else if (a == "-f" || a == "--for")
+            length_text = value();
+        else if (a == "--all-day")
+            all_day_flag = true;
+        else if (a == "-c" || a == "--calendar")
+            calendar = r.calendar_named(value()).name;
+        else if (a == "-L" || a == "--location")
+            e.location = value();
+        else if (a == "-n" || a == "--notes")
+            e.notes = value();
+        else if (a == "-A" || a == "--alert")
+            e.alerts = jotdo::parse_alerts(value());
+        else if (a == "-r" || a == "--repeat")
+            e.repeat = jotdo::parse_repeat(value());
+        else if (a == "--")
+            for (++i; i < args.size(); ++i)
+                words.push_back(args[i]);
+        else if (a.starts_with("-") && a.size() > 1)
+            throw std::invalid_argument("unknown option " + a);
+        else
+            words.push_back(a);
+    }
+    std::time_t length = e.end > e.start ? e.end - e.start : 0;
+    if (start_text) {
+        auto d = jotdo::parse_due(*start_text, now);
+        if (!d)
+            throw std::invalid_argument("an event needs a start");
+        e.all_day = !d->has_time || all_day_flag;
+        e.start = e.all_day ? jotdo::local_midnight(d->t) : d->t;
+        if (!length || (e.all_day && length % 86400))
+            length = e.all_day ? 86400 : 3600;
+    } else if (all_day_flag && !e.all_day && e.start) {
+        e.all_day = true, e.start = jotdo::local_midnight(e.start), length = 86400;
+    }
+    if (!e.start)
+        throw std::invalid_argument("an event needs a start (-s)");
+    if (end_text) {
+        auto d = jotdo::parse_due(*end_text, e.start - (e.all_day ? 0 : 60));
+        if (!d)
+            throw std::invalid_argument("could not read the end");
+        std::time_t end = e.all_day ? jotdo::local_midnight(d->t) : d->t;
+        if (e.all_day) {  // the last day, inclusive
+            std::tm tm{};
+            localtime_r(&end, &tm);
+            tm.tm_mday += 1, tm.tm_isdst = -1;
+            end = std::mktime(&tm);
+        }
+        if (end <= e.start)
+            throw std::invalid_argument("the event would end before it starts");
+        e.end = end;
+    } else if (length_text) {
+        e.end = e.start + static_cast<std::time_t>(jotdo::parse_duration(*length_text)) * 60;
+    } else {
+        e.end = e.start + (length ? length : (e.all_day ? 86400 : 3600));
+    }
+    return words;
+}
+
+// An event by number (from `events`) or UID prefix.
+jotdo::Event find_event(jotdo::Reminders& r, const std::string& ref, int days, std::time_t now) {
+    if (!ref.empty() && ref.size() <= 4 && ref.find_first_not_of("0123456789") == std::string::npos) {
+        std::time_t from = jotdo::local_midnight(now);
+        std::tm tm{};
+        localtime_r(&from, &tm);
+        tm.tm_mday += days, tm.tm_isdst = -1;
+        auto events = r.agenda(from, std::mktime(&tm));
+        size_t i = std::stoul(ref);
+        if (i >= 1 && i <= events.size())
+            return find_event(r, events[i - 1].uid, days, now);
+    }
+    auto hits = r.find_events(ref);
+    if (hits.empty())
+        throw std::runtime_error("no event matches " + ref);
+    if (hits.size() > 1) {
+        for (auto& h : hits)
+            if (h.uid == ref)
+                return h;
+        throw std::runtime_error(ref + " matches more than one event");
+    }
+    return hits.front();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -440,8 +573,20 @@ int main(int argc, char** argv) {
                     std::printf("%-20s %3zu open%s\n", l.name.c_str(), open, l.writable ? "" : "  (read-only)");
                 }
             }
-            if (json)
-                std::printf("%s]\n", out.c_str());
+            if (json) {
+                std::string cals = "[";
+                bool f = true;
+                for (auto& c : reminders.calendars()) {
+                    cals += std::string(f ? "" : ",") + "{\"name\":" + quote(c.name) + ",\"writable\":" + (c.writable ? "true" : "false") + "}";
+                    f = false;
+                }
+                std::printf("{\"lists\":%s],\"calendars\":%s]}\n", out.c_str(), cals.c_str());
+            } else {
+                std::printf("\ncalendars:");
+                for (auto& c : reminders.calendars())
+                    std::printf(" %s%s", c.name.c_str(), c.writable ? "" : " (read-only)");
+                std::printf("\n");
+            }
             return 0;
         }
         if (cmd == "agenda" && args.size() <= 2) {
@@ -549,6 +694,90 @@ int main(int argc, char** argv) {
             else
                 std::printf("deleted: %s\n", t.title.c_str());
             return 0;
+        }
+        if (cmd == "events" && args.size() <= 2) {
+            int days = args.size() == 2 ? std::clamp(std::stoi(args[1]), 1, 366) : config.agenda_days;
+            std::time_t from = jotdo::local_midnight(now);
+            std::tm tm{};
+            localtime_r(&from, &tm);
+            tm.tm_mday += days, tm.tm_isdst = -1;
+            auto events = reminders.agenda(from, std::mktime(&tm));
+            std::string out = "[";
+            for (size_t i = 0; i < events.size(); ++i) {
+                auto& e = events[i];
+                if (json) {
+                    out += (i ? "," : "") + json_event(e, i + 1);
+                } else {
+                    std::string when = jotdo::format_due({e.start, !e.all_day}, now);
+                    if (!e.all_day)
+                        when += "–" + clock(e.end);
+                    std::printf("%3zu  %s  %s%s  · %s  [%s]\n", i + 1, pad(when, 22).c_str(), e.title.c_str(),
+                                e.recurring ? " ↻" : "", e.calendar.c_str(), e.uid.substr(0, 8).c_str());
+                }
+            }
+            if (json)
+                std::printf("%s]\n", out.c_str());
+            else if (events.empty())
+                std::printf("no events in the next %d days\n", days);
+            return 0;
+        }
+        if (cmd == "event" && args.size() >= 2) {
+            const std::string sub = args[1];
+            auto report_event = [&](const char* verb, const jotdo::Event& e) {
+                if (json) {
+                    std::printf("{\"result\":%s,\"event\":%s}\n", quote(verb).c_str(), json_event(e).c_str());
+                } else {
+                    std::string when = jotdo::format_due({e.start, !e.all_day}, now);
+                    if (!e.all_day)
+                        when += "–" + clock(e.end);
+                    std::printf("%s: %s  %s · %s\n", verb, e.title.c_str(), when.c_str(), e.calendar.c_str());
+                }
+            };
+            if (sub == "new") {
+                jotdo::Event e;
+                std::string calendar = reminders.default_calendar().name;
+                auto words = apply_event_fields(args, 2, e, calendar, reminders, now, false);
+                for (auto& w : words)
+                    e.title += (e.title.empty() ? "" : " ") + w;
+                if (e.title.empty())
+                    throw std::invalid_argument("event new needs a title");
+                reminders.save_event(e, reminders.calendar_named(calendar), now);
+                report_event("added", e);
+                return 0;
+            }
+            if (sub == "show" && args.size() == 3) {
+                auto e = find_event(reminders, args[2], config.agenda_days, now);
+                if (json) {
+                    std::printf("%s\n", json_event(e).c_str());
+                } else {
+                    report_event("event", e);
+                    if (!e.location.empty())
+                        std::printf("location: %s\n", e.location.c_str());
+                    if (!e.repeat.empty())
+                        std::printf("repeat: %s\n", jotdo::describe_repeat(e.repeat).c_str());
+                    if (!e.alerts.empty())
+                        std::printf("alert: %s\n", jotdo::describe_alerts(e.alerts).c_str());
+                    if (!e.notes.empty())
+                        std::printf("\n%s\n", e.notes.c_str());
+                }
+                return 0;
+            }
+            if (sub == "set" && args.size() >= 4) {
+                auto e = find_event(reminders, args[2], config.agenda_days, now);
+                std::string calendar = e.calendar;
+                auto words = apply_event_fields(args, 3, e, calendar, reminders, now, true);
+                if (!words.empty())
+                    throw std::invalid_argument("event set takes fields, not words (did you mean -t \"" + words[0] + "\"?)");
+                reminders.save_event(e, reminders.calendar_named(calendar), now);
+                report_event("saved", e);
+                return 0;
+            }
+            if (sub == "rm" && args.size() == 3) {
+                auto e = find_event(reminders, args[2], config.agenda_days, now);
+                reminders.remove_event(e);
+                report_event("deleted", e);
+                return 0;
+            }
         }
         if (json)
             return fail("unknown command or wrong arguments; see jotdo --help");

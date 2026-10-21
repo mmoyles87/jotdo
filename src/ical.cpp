@@ -96,35 +96,39 @@ void remove_all(icalcomponent* c, icalproperty_kind kind) {
 
 // A DUE or DTSTART property for `d`: VALUE=DATE for a day, local wall time with TZID otherwise.
 // The VTIMEZONE it names is added to the calendar if it is not there yet.
-icalproperty* time_prop(icalproperty_kind kind, const Due& d, icalcomponent* vtodo) {
-    icaltimetype tt;
+icalproperty* new_time(icalproperty_kind kind, icaltimetype tt) {
+    switch (kind) {
+    case ICAL_DUE_PROPERTY:
+        return icalproperty_new_due(tt);
+    case ICAL_DTEND_PROPERTY:
+        return icalproperty_new_dtend(tt);
+    default:
+        return icalproperty_new_dtstart(tt);
+    }
+}
+
+// A DUE, DTSTART or DTEND property for `d`: VALUE=DATE for a day, local wall time with TZID
+// otherwise. The VTIMEZONE it names is added to the calendar if it is not there yet.
+icalproperty* time_prop(icalproperty_kind kind, const Due& d, icalcomponent* comp) {
     if (!d.has_time) {
         std::tm tm{};
         localtime_r(&d.t, &tm);
-        tt = icaltime_null_date();
+        icaltimetype tt = icaltime_null_date();
         tt.year = tm.tm_year + 1900, tt.month = tm.tm_mon + 1, tt.day = tm.tm_mday;
-    } else {
-        tt = icaltime_from_timet_with_zone(d.t, 0, local_zone());
-        tt.zone = nullptr;  // written as wall time plus the TZID parameter below
+        return new_time(kind, tt);
     }
-    icalproperty* p = kind == ICAL_DUE_PROPERTY ? icalproperty_new_due(tt) : icalproperty_new_dtstart(tt);
-    if (d.has_time) {
-        icaltimezone* zone = local_zone();
-        const char* tzid = icaltimezone_get_tzid(zone);
-        if (zone == icaltimezone_get_utc_timezone()) {
-            icaltimetype utc = icaltime_from_timet_with_zone(d.t, 0, zone);
-            if (kind == ICAL_DUE_PROPERTY)
-                icalproperty_set_due(p, utc);
-            else
-                icalproperty_set_dtstart(p, utc);
-        } else {
-            icalproperty_add_parameter(p, icalparameter_new_tzid(tzid));
-            icalcomponent* cal = calendar_of(vtodo);
-            if (!icalcomponent_get_timezone(cal, tzid))
-                if (icalcomponent* vtz = icaltimezone_get_component(zone))
-                    icalcomponent_add_component(cal, icalcomponent_clone(vtz));
-        }
-    }
+    icaltimezone* zone = local_zone();
+    if (zone == icaltimezone_get_utc_timezone())
+        return new_time(kind, icaltime_from_timet_with_zone(d.t, 0, zone));
+    icaltimetype tt = icaltime_from_timet_with_zone(d.t, 0, zone);
+    tt.zone = nullptr;  // written as wall time plus the TZID parameter
+    icalproperty* p = new_time(kind, tt);
+    const char* tzid = icaltimezone_get_tzid(zone);
+    icalproperty_add_parameter(p, icalparameter_new_tzid(tzid));
+    icalcomponent* cal = calendar_of(comp);
+    if (!icalcomponent_get_timezone(cal, tzid))
+        if (icalcomponent* vtz = icaltimezone_get_component(zone))
+            icalcomponent_add_component(cal, icalcomponent_clone(vtz));
     return p;
 }
 
@@ -420,31 +424,174 @@ bool advance(Task& t) {
     return true;
 }
 
+namespace {
+
+// Minutes before the start at which each VALARM of an event fires.
+std::vector<int> event_alerts(icalcomponent* v, std::time_t start, std::time_t end) {
+    std::vector<int> out;
+    for (icalcomponent* a = icalcomponent_get_first_component(v, ICAL_VALARM_COMPONENT); a;
+         a = icalcomponent_get_next_component(v, ICAL_VALARM_COMPONENT)) {
+        icalproperty* tp = icalcomponent_get_first_property(a, ICAL_TRIGGER_PROPERTY);
+        if (!tp)
+            continue;
+        icaltriggertype trig = icalproperty_get_trigger(tp);
+        if (!icaltime_is_null_time(trig.time)) {
+            const icaltimezone* zone = icaltime_is_utc(trig.time) ? icaltimezone_get_utc_timezone() : local_zone();
+            out.push_back(static_cast<int>((start - icaltime_as_timet_with_zone(trig.time, zone)) / 60));
+            continue;
+        }
+        int secs = icaldurationtype_as_seconds(trig.duration);
+        icalparameter* rel = icalproperty_get_first_parameter(tp, ICAL_RELATED_PARAMETER);
+        std::time_t base = rel && icalparameter_get_related(rel) == ICAL_RELATED_END ? end : start;
+        out.push_back(static_cast<int>((start - (base + secs)) / 60));
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+Event read_event(icalcomponent* v) {
+    Event e;
+    e.uid = prop_text(v, ICAL_UID_PROPERTY);
+    e.title = prop_text(v, ICAL_SUMMARY_PROPERTY);
+    e.location = prop_text(v, ICAL_LOCATION_PROPERTY);
+    e.notes = prop_text(v, ICAL_DESCRIPTION_PROPERTY);
+    e.repeat = prop_text(v, ICAL_RRULE_PROPERTY);
+    e.recurring = !e.repeat.empty() || icalcomponent_get_first_property(v, ICAL_RECURRENCEID_PROPERTY);
+    auto start = due_of(icalcomponent_get_first_property(v, ICAL_DTSTART_PROPERTY), v);
+    if (!start)
+        return e;
+    e.start = start->t;
+    e.all_day = !start->has_time;
+    if (auto end = due_of(icalcomponent_get_first_property(v, ICAL_DTEND_PROPERTY), v)) {
+        e.end = end->t;
+    } else if (icalproperty* d = icalcomponent_get_first_property(v, ICAL_DURATION_PROPERTY)) {
+        e.end = e.start + icaldurationtype_as_seconds(icalproperty_get_duration(d));
+    } else {
+        e.end = e.all_day ? e.start + 86400 : e.start;
+    }
+    e.alerts = event_alerts(v, e.start, e.end);
+    return e;
+}
+
+// The series' main VEVENT: the first one without a RECURRENCE-ID.
+icalcomponent* main_event(icalcomponent* cal) {
+    if (icalcomponent_isa(cal) == ICAL_VEVENT_COMPONENT)
+        return cal;
+    icalcomponent* first = nullptr;
+    for (icalcomponent* v = icalcomponent_get_first_component(cal, ICAL_VEVENT_COMPONENT); v;
+         v = icalcomponent_get_next_component(cal, ICAL_VEVENT_COMPONENT)) {
+        if (!first)
+            first = v;
+        if (!icalcomponent_get_first_property(v, ICAL_RECURRENCEID_PROPERTY))
+            return v;
+    }
+    return first;
+}
+
+}  // namespace
+
 std::vector<Event> parse_events(const std::string& ics) {
     std::vector<Event> out;
     Comp cal = parse(ics);
+    if (icalcomponent_isa(cal.get()) == ICAL_VEVENT_COMPONENT) {
+        Event e = read_event(cal.get());
+        if (e.start)
+            out.push_back(std::move(e));
+        return out;
+    }
     for (icalcomponent* v = icalcomponent_get_first_component(cal.get(), ICAL_VEVENT_COMPONENT); v;
          v = icalcomponent_get_next_component(cal.get(), ICAL_VEVENT_COMPONENT)) {
-        Event e;
-        e.title = prop_text(v, ICAL_SUMMARY_PROPERTY);
-        e.location = prop_text(v, ICAL_LOCATION_PROPERTY);
-        auto start = due_of(icalcomponent_get_first_property(v, ICAL_DTSTART_PROPERTY), v);
-        if (!start)
-            continue;
-        e.start = start->t;
-        e.all_day = !start->has_time;
-        if (auto end = due_of(icalcomponent_get_first_property(v, ICAL_DTEND_PROPERTY), v)) {
-            e.end = end->t;
-        } else if (icalproperty* d = icalcomponent_get_first_property(v, ICAL_DURATION_PROPERTY)) {
-            e.end = e.start + icaldurationtype_as_seconds(icalproperty_get_duration(d));
-        } else {
-            e.end = e.all_day ? e.start + 86400 : e.start;
-        }
-        out.push_back(std::move(e));
+        Event e = read_event(v);
+        if (e.start)
+            out.push_back(std::move(e));
     }
-    if (out.empty() && icalcomponent_isa(cal.get()) == ICAL_VEVENT_COMPONENT)
-        return parse_events("BEGIN:VCALENDAR\r\n" + ics + "END:VCALENDAR\r\n");
     return out;
+}
+
+std::string write_event(const Event& e, std::time_t now) {
+    init();
+    if (e.title.find_first_not_of(" \t\r\n") == std::string::npos)
+        throw std::invalid_argument("an event needs a title");
+    if (!e.start)
+        throw std::invalid_argument("an event needs a start");
+    if (e.end < e.start)
+        throw std::invalid_argument("the event ends before it starts");
+    Comp cal;
+    icalcomponent* v = nullptr;
+    std::optional<Event> before;
+    if (!e.raw.empty()) {
+        cal = parse(e.raw);
+        v = main_event(cal.get());
+        if (v)
+            before = read_event(v);
+    }
+    if (!v) {
+        cal.reset(icalcomponent_new(ICAL_VCALENDAR_COMPONENT));
+        icalcomponent_add_property(cal.get(), icalproperty_new_version("2.0"));
+        icalcomponent_add_property(cal.get(), icalproperty_new_prodid("-//jotdo//jotdo 0.1//EN"));
+        v = icalcomponent_new(ICAL_VEVENT_COMPONENT);
+        icalcomponent_add_component(cal.get(), v);
+        icalcomponent_add_property(v, icalproperty_new_uid(e.uid.empty() ? new_uid().c_str() : e.uid.c_str()));
+        icalcomponent_add_property(v, icalproperty_new_created(utc_now(now)));
+    }
+
+    set_text(v, ICAL_SUMMARY_PROPERTY, e.title);
+    set_text(v, ICAL_LOCATION_PROPERTY, e.location);
+    set_text(v, ICAL_DESCRIPTION_PROPERTY, e.notes);
+
+    bool times_changed = !before || before->start != e.start || before->end != e.end || before->all_day != e.all_day;
+    if (times_changed) {
+        remove_all(v, ICAL_DTSTART_PROPERTY);
+        remove_all(v, ICAL_DTEND_PROPERTY);
+        remove_all(v, ICAL_DURATION_PROPERTY);
+        icalcomponent_add_property(v, time_prop(ICAL_DTSTART_PROPERTY, {e.start, !e.all_day}, v));
+        std::time_t end = e.end > e.start ? e.end : e.all_day ? e.start + 86400 : e.start;
+        icalcomponent_add_property(v, time_prop(ICAL_DTEND_PROPERTY, {end, !e.all_day}, v));
+    }
+    if (!before || before->repeat != e.repeat) {
+        remove_all(v, ICAL_RRULE_PROPERTY);
+        if (!e.repeat.empty()) {
+            icalrecurrencetype* r = icalrecurrencetype_new_from_string(e.repeat.c_str());
+            if (!r)
+                throw std::invalid_argument("not a repeat rule: " + e.repeat);
+            icalcomponent_add_property(v, icalproperty_new_rrule(r));
+            icalrecurrencetype_unref(r);
+        }
+    }
+    if (!before ? !e.alerts.empty() : before->alerts != e.alerts) {
+        std::vector<icalcomponent*> old;
+        for (icalcomponent* a = icalcomponent_get_first_component(v, ICAL_VALARM_COMPONENT); a;
+             a = icalcomponent_get_next_component(v, ICAL_VALARM_COMPONENT))
+            old.push_back(a);
+        for (auto* a : old) {
+            icalcomponent_remove_component(v, a);
+            icalcomponent_free(a);
+        }
+        for (int m : e.alerts) {
+            icalcomponent* a = icalcomponent_new(ICAL_VALARM_COMPONENT);
+            icalcomponent_add_property(a, icalproperty_new_action(ICAL_ACTION_DISPLAY));
+            icalcomponent_add_property(a, icalproperty_new_description("Reminder"));
+            icaltriggertype trig{};
+            trig.time = icaltime_null_time();
+            trig.duration = minutes_before(m);
+            icalcomponent_add_property(a, icalproperty_new_trigger(trig));  // relative to the start
+            icalcomponent_add_component(v, a);
+        }
+    }
+
+    remove_all(v, ICAL_DTSTAMP_PROPERTY);
+    icalcomponent_add_property(v, icalproperty_new_dtstamp(utc_now(now)));
+    remove_all(v, ICAL_LASTMODIFIED_PROPERTY);
+    icalcomponent_add_property(v, icalproperty_new_lastmodified(utc_now(now)));
+    if (before) {
+        int seq = 1;
+        if (icalproperty* p = icalcomponent_get_first_property(v, ICAL_SEQUENCE_PROPERTY))
+            seq = icalproperty_get_sequence(p) + 1;
+        remove_all(v, ICAL_SEQUENCE_PROPERTY);
+        icalcomponent_add_property(v, icalproperty_new_sequence(seq));
+    }
+    return text(cal.get());
 }
 
 }  // namespace jotdo

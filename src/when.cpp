@@ -523,6 +523,18 @@ std::string describe_alerts(const std::vector<int>& minutes) {
     return out;
 }
 
+int parse_duration(const std::string& input) {
+    std::vector<int> m;
+    try {
+        m = parse_alerts(trim(input) + " before");
+    } catch (const std::invalid_argument&) {
+        m.clear();
+    }
+    if (m.size() != 1 || m[0] <= 0)
+        throw std::invalid_argument("could not read the length \"" + input + "\" (try 1h, 90m, 1h30m, 2 hours, 1 day)");
+    return m[0];
+}
+
 int parse_priority(const std::string& input) {
     std::string t = lower(trim(input));
     if (t.empty() || t == "none" || t == "-" || t == "0" || t == "no")

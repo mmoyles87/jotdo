@@ -97,6 +97,7 @@ Config Config::load(const std::filesystem::path& path) {
         acc.lists = strings(*a, "lists", where);
         acc.calendars = strings(*a, "calendars", where);
         acc.default_list = (*a)["default_list"].value_or(std::string{});
+        acc.default_calendar = (*a)["default_calendar"].value_or(std::string{});
         c.accounts.emplace(acc.name, std::move(acc));
     }
     if (c.default_account.empty())

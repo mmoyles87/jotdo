@@ -162,3 +162,43 @@ TEST(Events, AllDayAndTimed) {
     EXPECT_TRUE(ev[1].all_day);
     EXPECT_EQ(ev[1].start, at(2026, 10, 23));
 }
+
+TEST(Events, WriteNewAndEdit) {
+    Event e;
+    e.title = "Dinner";
+    e.start = at(2026, 10, 24, 19);
+    e.end = at(2026, 10, 24, 20, 30);
+    e.location = "Home";
+    e.alerts = {60};
+    std::string out = write_event(e, NOW);
+    EXPECT_NE(out.find("DTSTART;TZID=America/New_York:20261024T190000"), std::string::npos) << out;
+    EXPECT_NE(out.find("DTEND;TZID=America/New_York:20261024T203000"), std::string::npos);
+    EXPECT_NE(out.find("TRIGGER:-PT1H"), std::string::npos);
+    auto back = parse_events(out);
+    ASSERT_EQ(back.size(), 1u);
+    EXPECT_EQ(back[0].start, e.start);
+    EXPECT_EQ(back[0].end, e.end);
+    EXPECT_EQ(back[0].alerts, (std::vector<int>{60}));
+    EXPECT_EQ(back[0].location, "Home");
+
+    Event edited = back[0];
+    edited.raw = out + "";  // an attendee the phone added stays through an edit
+    edited.raw.replace(edited.raw.find("END:VEVENT"), 10, "ATTENDEE;CN=Bridget:mailto:bridget@example.com\r\nEND:VEVENT");
+    edited.title = "Dinner with B";
+    std::string again = write_event(edited, NOW);
+    EXPECT_NE(again.find("ATTENDEE;CN=Bridget"), std::string::npos);
+    EXPECT_NE(again.find("SUMMARY:Dinner with B"), std::string::npos);
+    EXPECT_NE(again.find("SEQUENCE:1"), std::string::npos);
+}
+
+TEST(Events, AllDayEndIsExclusive) {
+    Event e;
+    e.title = "Trip";
+    e.all_day = true;
+    e.start = at(2026, 10, 30);
+    e.end = at(2026, 11, 1);  // through Oct 31
+    std::string out = write_event(e, NOW);
+    EXPECT_NE(out.find("DTSTART;VALUE=DATE:20261030"), std::string::npos) << out;
+    EXPECT_NE(out.find("DTEND;VALUE=DATE:20261101"), std::string::npos);
+    EXPECT_THROW(write_event(Event{}, NOW), std::invalid_argument);
+}
