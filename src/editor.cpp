@@ -7,6 +7,7 @@
 #include <sstream>
 #include <stdexcept>
 
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -19,13 +20,6 @@ std::string shell_quote(const std::string& s) {
     for (char c : s)
         out += c == '\'' ? std::string("'\\''") : std::string(1, c);
     return out + "'";
-}
-
-std::string read_file(const std::filesystem::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    std::ostringstream s;
-    s << f.rdbuf();
-    return s.str();
 }
 
 }  // namespace
@@ -50,10 +44,23 @@ std::optional<std::string> edit_text(const std::string& text, const std::optiona
         editor = "vi";
     std::string cmd = std::string(editor) + " " + shell_quote(tmpl);
     int status = std::system(cmd.c_str());
-    std::string edited = read_file(tmpl);
+    std::ifstream f(tmpl, std::ios::binary);
+    if (!f) {  // the editor removed or replaced the file: nothing to read, nothing to save
+        unlink(tmpl.c_str());
+        throw std::runtime_error("the edited text could not be read back; nothing was saved");
+    }
+    std::ostringstream buf;
+    buf << f.rdbuf();
+    std::string edited = buf.str();
     unlink(tmpl.c_str());
     if (status == -1 || !WIFEXITED(status))
         throw std::runtime_error(std::string("could not run ") + editor);
+    if (WEXITSTATUS(status) != 0) {  // vim's :cq and the like: an abandoned edit
+        if (edited != original.value_or(text))
+            throw std::runtime_error(std::string(editor) + " exited with an error; not saved, your text is in " +
+                                     keep_unsaved(edited).string());
+        return std::nullopt;
+    }
     if (edited == original.value_or(text))
         return std::nullopt;
     return edited;
@@ -67,11 +74,20 @@ std::filesystem::path keep_unsaved(const std::string& text) {
         dir = std::filesystem::path(std::getenv("HOME")) / ".local/state";
     dir /= "jotdo";
     std::filesystem::create_directories(dir);
+    std::filesystem::permissions(dir, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
     std::time_t now = std::time(nullptr);
     char stamp[32];
     std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", std::localtime(&now));
-    auto path = dir / (std::string("unsaved-") + stamp + ".txt");
-    std::ofstream(path, std::ios::binary) << text;
+    // A unique name, private to the user, so two failures in the same second keep both texts.
+    std::string path = (dir / (std::string("unsaved-") + stamp + "-XXXXXX.txt")).string();
+    int fd = mkstemps(path.data(), 4);
+    if (fd < 0)
+        throw std::runtime_error("could not keep the unsaved text in " + dir.string());
+    fchmod(fd, 0600);
+    bool ok = write(fd, text.data(), text.size()) == static_cast<ssize_t>(text.size());
+    ok = close(fd) == 0 && ok;
+    if (!ok)
+        throw std::runtime_error("could not keep the unsaved text in " + path);
     return path;
 }
 

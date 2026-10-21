@@ -152,13 +152,17 @@ public:
             std::mutex m;
             std::condition_variable_any cv;
             std::unique_lock lock(m);
-            while (!cv.wait_for(lock, st, AUTO_REFRESH, [] { return false; }))
+            // wait_for returns the predicate's value: true once a stop is requested, which ends
+            // the loop; a timeout gives false and posts the refresh.
+            while (!cv.wait_for(lock, st, AUTO_REFRESH, [&st] { return st.stop_requested(); }))
                 screen_.Post([this] {
                     if (!busy_)
                         refresh(current_uid(), true);
                 });
         });
         screen_.Loop(ui);
+        ticker_.request_stop();  // before the screen goes away: nothing may be posted to it after the loop
+        ticker_.join();
         return 0;
     }
 
@@ -197,7 +201,10 @@ private:
 
     // --- state ----------------------------------------------------------------
 
-    const SideItem& side() const { return side_[std::clamp(side_sel_, 0, static_cast<int>(side_.size()) - 1)]; }
+    const SideItem& side() const {
+        static const SideItem none{"", View::All, ""};  // before the first load succeeds
+        return side_.empty() ? none : side_[std::clamp(side_sel_, 0, static_cast<int>(side_.size()) - 1)];
+    }
 
     Task* current() {
         if (rows_.empty())
@@ -353,9 +360,12 @@ private:
         select_row(row_sel_);
     }
 
-    void refresh(const std::string& keep_uid = "", bool quiet = false) {
+    // keep_uid by value: callers pass a uid that lives in tasks_, which this replaces.
+    void refresh(std::string keep_uid = "", bool quiet = false) {
+        std::vector<Task> tasks;
+        std::vector<Event> events;
         try {
-            tasks_ = rem_.load();
+            tasks = rem_.load();
             if (side_.empty())
                 build_side();
             std::time_t now = std::time(nullptr);
@@ -363,12 +373,14 @@ private:
             std::tm tm{};
             localtime_r(&from, &tm);
             tm.tm_mday += agenda_days_, tm.tm_isdst = -1;
-            events_ = rem_.agenda(from, std::mktime(&tm));
+            events = rem_.agenda(from, std::mktime(&tm));
             events_from_ = from;
         } catch (const std::exception& e) {
             status_ = std::string("load failed: ") + e.what();
-            return;
+            return;  // the rows still index the old lists, which stay as they were
         }
+        tasks_ = std::move(tasks);  // replaced together, with the rows rebuilt right after
+        events_ = std::move(events);
         build_rows(keep_uid);
         if (!quiet)
             count_status();
@@ -539,6 +551,8 @@ private:
     }
 
     void open_side(int i) {
+        if (side_.empty())
+            return;
         side_sel_ = std::clamp(i, 0, static_cast<int>(side_.size()) - 1);
         pending_delete_.clear();
         build_rows();

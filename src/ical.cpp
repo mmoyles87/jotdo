@@ -403,6 +403,7 @@ bool advance(Task& t) {
     if (!it)
         return false;
     std::optional<Due> next;
+    int used = 0;  // occurrences up to and including the current one
     for (int guard = 0; guard < 100000; ++guard) {
         icaltimetype n = icalrecur_iterator_next(it);
         if (icaltime_is_null_time(n))
@@ -416,10 +417,19 @@ bool advance(Task& t) {
             next = d;
             break;
         }
+        ++used;
     }
     icalrecur_iterator_free(it);
     if (!next)
         return false;
+    // The series is saved as starting at the new date, so a COUNT has to shrink by the
+    // occurrences already used, or it would start over each time.
+    if (auto pos = t.repeat.find("COUNT="); pos != std::string::npos) {
+        size_t end = t.repeat.find(';', pos);
+        int count = std::stoi(t.repeat.substr(pos + 6, end == std::string::npos ? std::string::npos : end - pos - 6));
+        t.repeat.replace(pos + 6, (end == std::string::npos ? t.repeat.size() : end) - pos - 6,
+                         std::to_string(std::max(1, count - used)));
+    }
     t.due = next;
     return true;
 }
@@ -468,7 +478,7 @@ Event read_event(icalcomponent* v) {
     } else if (icalproperty* d = icalcomponent_get_first_property(v, ICAL_DURATION_PROPERTY)) {
         e.end = e.start + icaldurationtype_as_seconds(icalproperty_get_duration(d));
     } else {
-        e.end = e.all_day ? e.start + 86400 : e.start;
+        e.end = e.all_day ? add_days(e.start, 1) : e.start;
     }
     e.alerts = event_alerts(v, e.start, e.end);
     return e;
@@ -546,7 +556,7 @@ std::string write_event(const Event& e, std::time_t now) {
         remove_all(v, ICAL_DTEND_PROPERTY);
         remove_all(v, ICAL_DURATION_PROPERTY);
         icalcomponent_add_property(v, time_prop(ICAL_DTSTART_PROPERTY, {e.start, !e.all_day}, v));
-        std::time_t end = e.end > e.start ? e.end : e.all_day ? e.start + 86400 : e.start;
+        std::time_t end = e.end > e.start ? e.end : e.all_day ? add_days(e.start, 1) : e.start;
         icalcomponent_add_property(v, time_prop(ICAL_DTEND_PROPERTY, {end, !e.all_day}, v));
     }
     if (!before || before->repeat != e.repeat) {

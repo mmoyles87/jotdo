@@ -48,5 +48,6 @@ int parse_priority(const std::string& text);
 std::string describe_priority(int priority);  // "high", "medium", "low", ""
 
 std::time_t local_midnight(std::time_t t);
+std::time_t add_days(std::time_t t, int days);  // calendar days: the same wall-clock time, n days on
 
 }  // namespace jotdo

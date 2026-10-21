@@ -59,6 +59,8 @@ private:
     std::vector<Collection> lists_;
     bool loaded_ = false;
     void discover();
+    void finish_move(const std::string& new_href, const std::string& new_etag, const std::string& old_href,
+                     const std::string& old_etag);
 };
 
 // Sorts reminders the way load() returns them.

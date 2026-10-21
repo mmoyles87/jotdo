@@ -74,6 +74,8 @@ Response Http::request(const std::string& method, const std::string& url, const 
     curl_easy_setopt(c, CURLOPT_PASSWORD, impl_->password.c_str());
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(c, CURLOPT_UNRESTRICTED_AUTH, 0L);  // never send the password to another host
+    curl_easy_setopt(c, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS_STR, url.starts_with("https://") ? "https" : "http,https");  // no downgrade
     curl_easy_setopt(c, CURLOPT_MAXREDIRS, 5L);
     curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(c, CURLOPT_TIMEOUT, 60L);

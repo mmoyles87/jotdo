@@ -89,7 +89,24 @@ std::time_t make(int year, int mon, int mday, int hour = 0, int min = 0) {
     return std::mktime(&tm);
 }
 
-std::time_t add_days(std::time_t day, int n) {
+// The date, or throws if it does not exist (Feb 31 would otherwise roll into March).
+std::time_t make_date(int year, int mon, int mday, const std::string& input) {
+    std::time_t t = make(year, mon, mday);
+    std::tm tm{};
+    localtime_r(&t, &tm);
+    if (tm.tm_mon != mon || tm.tm_mday != mday)
+        throw std::invalid_argument("there is no such date in \"" + input + "\"");
+    return t;
+}
+
+// Digits as a number no larger than `limit`.
+int small_number(const std::string& digits, int limit, const std::string& input) {
+    if (digits.empty() || digits.size() > 9 || std::stol(digits) > limit)
+        throw std::invalid_argument("the number in \"" + input + "\" is too large");
+    return static_cast<int>(std::stol(digits));
+}
+
+std::time_t day_after(std::time_t day, int n) {
     std::tm tm = local(day);
     return make(tm.tm_year + 1900, tm.tm_mon, tm.tm_mday + n);
 }
@@ -138,6 +155,12 @@ int parse_time(const std::string& w, const std::string& next, bool* used_next) {
 
 }  // namespace
 
+std::time_t add_days(std::time_t t, int days) {
+    std::tm tm = local(t);
+    tm.tm_mday += days, tm.tm_isdst = -1;
+    return std::mktime(&tm);
+}
+
 std::time_t local_midnight(std::time_t t) {
     std::tm tm = local(t);
     return make(tm.tm_year + 1900, tm.tm_mon, tm.tm_mday);
@@ -148,6 +171,8 @@ std::optional<Due> parse_due(const std::string& input, std::time_t now) {
     if (text.empty() || text == "none" || text == "-" || text == "no")
         return std::nullopt;
     auto w = words(text);
+    if (w.empty())
+        cannot(input);
     std::tm today = local(now);
     std::time_t midnight = local_midnight(now);
 
@@ -163,15 +188,15 @@ std::optional<Due> parse_due(const std::string& input, std::time_t now) {
             unit = num.substr(d), num.resize(d);
         else if (w.size() != 3)
             cannot(input);
-        int n = std::stoi(num);
+        int n = small_number(num, 100000, input);
         if (unit == "m" || unit == "min" || unit == "mins" || unit == "minute" || unit == "minutes")
             return Due{now + n * 60, true};
         if (unit == "h" || unit == "hr" || unit == "hrs" || unit == "hour" || unit == "hours")
             return Due{now + n * 3600, true};
         if (unit == "d" || unit == "day" || unit == "days")
-            return Due{add_days(midnight, n), false};
+            return Due{day_after(midnight, n), false};
         if (unit == "w" || unit == "wk" || unit == "week" || unit == "weeks")
-            return Due{add_days(midnight, 7 * n), false};
+            return Due{day_after(midnight, 7 * n), false};
         cannot(input);
     }
 
@@ -196,20 +221,20 @@ std::optional<Due> parse_due(const std::string& input, std::time_t now) {
             if (minutes < 0)
                 minutes = 20 * 60;
         } else if (t == "tomorrow" || t == "tmr" || t == "tmrw" || t == "tom") {
-            take_day(add_days(midnight, 1)), ++i;
+            take_day(day_after(midnight, 1)), ++i;
         } else if (t == "next" && weekday(next) >= 0) {
             int wd = weekday(next);
             int ahead = (wd - today.tm_wday + 7) % 7;
-            take_day(add_days(midnight, ahead == 0 ? 7 : ahead)), i += 2;
+            take_day(day_after(midnight, ahead == 0 ? 7 : ahead)), i += 2;
         } else if (weekday(t) >= 0) {
             int ahead = (weekday(t) - today.tm_wday + 7) % 7;
-            take_day(add_days(midnight, ahead == 0 ? 7 : ahead)), ++i;
+            take_day(day_after(midnight, ahead == 0 ? 7 : ahead)), ++i;
         } else if (t.size() == 10 && t[4] == '-' && t[7] == '-' && all_digits(t.substr(0, 4)) && all_digits(t.substr(5, 2)) &&
                    all_digits(t.substr(8, 2))) {
             int y = std::stoi(t.substr(0, 4)), mo = std::stoi(t.substr(5, 2)), d = std::stoi(t.substr(8, 2));
             if (mo < 1 || mo > 12 || d < 1 || d > 31)
                 cannot(input);
-            take_day(make(y, mo - 1, d)), ++i;
+            take_day(make_date(y, mo - 1, d, input)), ++i;
         } else if (auto slash = t.find('/'); slash != std::string::npos && t.find(':') == std::string::npos) {
             std::string a = t.substr(0, slash), rest = t.substr(slash + 1), b = rest, c;
             if (auto s2 = rest.find('/'); s2 != std::string::npos)
@@ -220,9 +245,9 @@ std::optional<Due> parse_due(const std::string& input, std::time_t now) {
             if (mo < 1 || mo > 12 || d < 1 || d > 31)
                 cannot(input);
             int y = c.empty() ? today.tm_year + 1900 : std::stoi(c) + (c.size() == 2 ? 2000 : 0);
-            std::time_t when = make(y, mo - 1, d);
+            std::time_t when = make_date(y, mo - 1, d, input);
             if (c.empty() && when < midnight)
-                when = make(y + 1, mo - 1, d);
+                when = make_date(y + 1, mo - 1, d, input);
             take_day(when), ++i;
         } else if (month(t) >= 0 && all_digits(next)) {  // oct 24 [2027]
             int mo = month(t), d = std::stoi(next);
@@ -231,15 +256,15 @@ std::optional<Due> parse_due(const std::string& input, std::time_t now) {
             bool year_given = i < w.size() && all_digits(w[i]) && w[i].size() == 4;
             if (year_given)
                 y = std::stoi(w[i]), ++i;
-            std::time_t when = make(y, mo, d);
+            std::time_t when = make_date(y, mo, d, input);
             if (!year_given && when < midnight)
-                when = make(y + 1, mo, d);
+                when = make_date(y + 1, mo, d, input);
             take_day(when);
         } else if (all_digits(t) && month(next) >= 0 && t.size() <= 2) {  // 24 oct
             int d = std::stoi(t), mo = month(next);
-            std::time_t when = make(today.tm_year + 1900, mo, d);
+            std::time_t when = make_date(today.tm_year + 1900, mo, d, input);
             if (when < midnight)
-                when = make(today.tm_year + 1901, mo, d);
+                when = make_date(today.tm_year + 1901, mo, d, input);
             take_day(when), i += 2;
         } else if (int m = parse_time(t, next, &used_next); m >= 0 && minutes < 0) {
             minutes = m;
@@ -507,7 +532,7 @@ std::vector<int> parse_alerts(const std::string& input) {
                     ++d;
                 if (d == p)
                     fail();
-                int n = std::stoi(word.substr(p, d - p));
+                int n = small_number(word.substr(p, d - p), 1000000, input);
                 size_t u = d;
                 while (u < word.size() && std::isalpha(static_cast<unsigned char>(word[u])))
                     ++u;
@@ -531,6 +556,8 @@ std::vector<int> parse_alerts(const std::string& input) {
 std::string describe_alerts(const std::vector<int>& minutes) {
     std::string out;
     for (int m : minutes) {
+        if (m < 0)
+            continue;  // an alarm after the due time: kept on the server, not shown
         std::string one;
         if (m == 0) {
             one = "at due";

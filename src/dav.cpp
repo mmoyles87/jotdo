@@ -40,13 +40,27 @@ bool has_descendant(const pugi::xml_node& n, const char* name) {
     return false;
 }
 
+// All the element's direct text, CDATA included, in order (a server may split it).
 std::string text_of(const pugi::xml_node& n) {
-    std::string s = n.child_value();
-    if (s.empty())  // CDATA, or text split around entities
-        for (auto c : n.children())
-            if (c.type() == pugi::node_pcdata || c.type() == pugi::node_cdata)
-                s += c.value();
+    std::string s;
+    for (auto c : n.children())
+        if (c.type() == pugi::node_pcdata || c.type() == pugi::node_cdata)
+            s += c.value();
     return s;
+}
+
+std::string xml_escape(const std::string& in) {
+    std::string out;
+    for (char c : in) {
+        switch (c) {
+        case '&': out += "&amp;"; break;
+        case '<': out += "&lt;"; break;
+        case '>': out += "&gt;"; break;
+        case '"': out += "&quot;"; break;
+        default: out += c;
+        }
+    }
+    return out;
 }
 
 // The <prop> elements of a <response> whose propstat status is 200.
@@ -115,9 +129,14 @@ Dav::Dav(const Account& account)
     origin_ = slash == std::string::npos ? account_.url : account_.url.substr(0, slash);
 }
 
+// Every request carries the account's password, so an href the server hands back must stay on
+// the account's own origin.
 std::string Dav::absolute(const std::string& href) const {
-    if (href.starts_with("http://") || href.starts_with("https://"))
+    if (href.starts_with("http://") || href.starts_with("https://")) {
+        if (href != origin_ && !href.starts_with(origin_ + "/"))
+            throw std::runtime_error("the server pointed at another site (" + href + "); not following it");
         return href;
+    }
     return origin_ + (href.starts_with("/") ? "" : "/") + href;
 }
 
@@ -233,12 +252,9 @@ std::vector<Resource> Dav::query(const Collection& c, const std::string& compone
 }
 
 std::vector<Resource> Dav::find_uid(const Collection& c, const std::string& component, const std::string& uid) {
-    std::string safe;
-    for (char ch : uid)
-        if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '-' || ch == '_' || ch == '.' || ch == '@')
-            safe += ch;
-    if (safe.empty())
+    if (uid.empty())
         return {};
+    std::string safe = xml_escape(uid);
     std::string body = R"(<?xml version="1.0" encoding="utf-8"?>
 <c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
   <d:prop><d:getetag/><c:calendar-data/></d:prop>
@@ -272,9 +288,9 @@ std::string Dav::put(const std::string& href, const std::string& ics, const std:
 }
 
 void Dav::remove(const std::string& href, const std::string& etag) {
-    std::vector<std::string> headers;
-    if (!etag.empty())
-        headers.push_back("If-Match: " + etag);
+    if (etag.empty())  // without a version to check against, a newer edit could be deleted unseen
+        throw std::runtime_error("the server gave no version for " + href + "; not deleting it blind");
+    std::vector<std::string> headers{"If-Match: " + etag};
     Response r = http_.request("DELETE", href, "", headers);
     if (r.status == 412)
         throw Conflict("changed on the server");

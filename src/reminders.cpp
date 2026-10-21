@@ -42,6 +42,23 @@ void sort_tasks(std::vector<Task>& tasks) {
 
 Reminders::Reminders(Dav& dav) : dav_(dav) {}
 
+// A move is a copy to the new place, then a delete of the old one. If the old one changed in the
+// meantime, the copy is taken back out, so the conflict leaves nothing behind.
+void Reminders::finish_move(const std::string& new_href, const std::string& new_etag, const std::string& old_href,
+                            const std::string& old_etag) {
+    try {
+        dav_.remove(old_href, old_etag);
+    } catch (...) {
+        try {
+            std::string etag = new_etag.empty() ? dav_.get(new_href).etag : new_etag;
+            dav_.remove(new_href, etag);
+        } catch (...) {
+            throw std::runtime_error("moving failed half way: a copy is left at " + new_href);
+        }
+        throw;
+    }
+}
+
 void Reminders::discover() {
     if (loaded_)
         return;
@@ -121,9 +138,13 @@ void Reminders::save(Task& t, const Collection& list, std::time_t now) {
     std::string href = t.href.empty() || moving ? href_for(list, t.uid) : t.href;
     std::string etag = dav_.put(href, ics, t.href.empty() || moving ? "" : t.etag);
     if (moving)
-        dav_.remove(t.href, t.etag);
-    if (etag.empty()) {  // the server changed what it stored, or did not say: read it back
+        finish_move(href, etag, t.href, t.etag);
+    if (etag.empty()) {  // the server did not say: read back what it stored, every field of it
         Resource r = dav_.get(href);
+        auto fresh = parse_task(r.data);
+        if (!fresh)
+            throw std::runtime_error("the server stored something that is not a reminder at " + href);
+        t = *fresh;
         etag = r.etag, ics = r.data;
     }
     t.href = href;
@@ -225,9 +246,15 @@ void Reminders::save_event(Event& e, const Collection& calendar, std::time_t now
     std::string href = e.href.empty() || moving ? href_for(calendar, e.uid) : e.href;
     std::string etag = dav_.put(href, ics, e.href.empty() || moving ? "" : e.etag);
     if (moving)
-        dav_.remove(e.href, e.etag);
+        finish_move(href, etag, e.href, e.etag);
     if (etag.empty()) {
         Resource r = dav_.get(href);
+        auto events = parse_events(r.data);
+        if (events.empty())
+            throw std::runtime_error("the server stored something that is not an event at " + href);
+        std::string keep_uid = e.uid;
+        e = events.front();
+        e.uid = keep_uid;
         etag = r.etag, ics = r.data;
     }
     e.href = href, e.etag = etag, e.raw = ics;

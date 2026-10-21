@@ -202,3 +202,16 @@ TEST(Events, AllDayEndIsExclusive) {
     EXPECT_NE(out.find("DTEND;VALUE=DATE:20261101"), std::string::npos);
     EXPECT_THROW(write_event(Event{}, NOW), std::invalid_argument);
 }
+
+TEST(Advance, CountSurvivesSaving) {
+    Task t;
+    t.title = "Twice";
+    t.due = Due{at(2026, 10, 21), false};
+    t.repeat = "FREQ=DAILY;COUNT=2";
+    t.raw = write_task(t, NOW);
+    ASSERT_TRUE(advance(t));
+    EXPECT_EQ(t.repeat, "FREQ=DAILY;COUNT=1");
+    t.raw = write_task(t, NOW);  // saved and loaded again, as after ticking it off on the server
+    t = *parse_task(t.raw);
+    EXPECT_FALSE(advance(t)) << "the second occurrence was the last";
+}

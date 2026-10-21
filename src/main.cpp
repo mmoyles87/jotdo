@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -189,7 +190,7 @@ std::string json_event(const jotdo::Event& e, size_t n = 0) {
     o += ",\"title\":" + quote(e.title);
     o += ",\"start\":" + quote(iso(e.start, !e.all_day));
     // an all-day event's end is exclusive in iCalendar; people mean the last day
-    o += ",\"end\":" + quote(iso(e.all_day && e.end > e.start ? e.end - 86400 : e.end, !e.all_day));
+    o += ",\"end\":" + quote(iso(e.all_day && e.end > e.start ? jotdo::add_days(e.end, -1) : e.end, !e.all_day));
     o += ",\"all_day\":" + std::string(e.all_day ? "true" : "false");
     o += ",\"location\":" + (e.location.empty() ? "null" : quote(e.location));
     o += ",\"notes\":" + (e.notes.empty() ? "null" : quote(e.notes));
@@ -406,31 +407,32 @@ std::vector<std::string> apply_event_fields(const std::vector<std::string>& args
             throw std::invalid_argument("an event needs a start");
         e.all_day = !d->has_time || all_day_flag;
         e.start = e.all_day ? jotdo::local_midnight(d->t) : d->t;
-        if (!length || (e.all_day && length % 86400))
-            length = e.all_day ? 86400 : 3600;
+        if (!length || e.all_day)
+            length = 0;  // all-day lengths are counted in days below
     } else if (all_day_flag && !e.all_day && e.start) {
-        e.all_day = true, e.start = jotdo::local_midnight(e.start), length = 86400;
+        e.all_day = true, e.start = jotdo::local_midnight(e.start), length = 0;
     }
+    // An all-day event keeps its number of days, counted on the calendar, not in seconds: a day
+    // with a clock change is 23 or 25 hours long.
+    int days = 1;
+    if (e.all_day && e.end > e.start)
+        days = std::max(1, static_cast<int>(std::lround(std::difftime(jotdo::local_midnight(e.end + 7200), e.start) / 86400.0)));
     if (!e.start)
         throw std::invalid_argument("an event needs a start (-s)");
     if (end_text) {
         auto d = jotdo::parse_due(*end_text, e.start - (e.all_day ? 0 : 60));
         if (!d)
             throw std::invalid_argument("could not read the end");
-        std::time_t end = e.all_day ? jotdo::local_midnight(d->t) : d->t;
-        if (e.all_day) {  // the last day, inclusive
-            std::tm tm{};
-            localtime_r(&end, &tm);
-            tm.tm_mday += 1, tm.tm_isdst = -1;
-            end = std::mktime(&tm);
-        }
+        std::time_t end = e.all_day ? jotdo::add_days(jotdo::local_midnight(d->t), 1) : d->t;  // all day: through that day
         if (end <= e.start)
             throw std::invalid_argument("the event would end before it starts");
         e.end = end;
     } else if (length_text) {
-        e.end = e.start + static_cast<std::time_t>(jotdo::parse_duration(*length_text)) * 60;
+        int minutes = jotdo::parse_duration(*length_text);
+        e.end = e.all_day ? jotdo::add_days(e.start, std::max(1, (minutes + 1439) / 1440))
+                          : e.start + static_cast<std::time_t>(minutes) * 60;
     } else {
-        e.end = e.start + (length ? length : (e.all_day ? 86400 : 3600));
+        e.end = e.all_day ? jotdo::add_days(e.start, days) : e.start + (length ? length : 3600);
     }
     return words;
 }
@@ -444,8 +446,14 @@ jotdo::Event find_event(jotdo::Reminders& r, const std::string& ref, int days, s
         tm.tm_mday += days, tm.tm_isdst = -1;
         auto events = r.agenda(from, std::mktime(&tm));
         size_t i = std::stoul(ref);
-        if (i >= 1 && i <= events.size())
-            return find_event(r, events[i - 1].uid, days, now);
+        if (i >= 1 && i <= events.size()) {
+            for (auto& h : r.find_events(events[i - 1].uid))  // that event's UID, never read as a number again
+                if (h.uid == events[i - 1].uid)
+                    return h;
+            throw std::runtime_error("event " + ref + " is gone from the server");
+        }
+        throw std::runtime_error("there is no event " + ref + " in the next " + std::to_string(days) +
+                                 " days (numbers come from `jotdo events`)");
     }
     auto hits = r.find_events(ref);
     if (hits.empty())
@@ -615,9 +623,16 @@ int main(int argc, char** argv) {
                     auto kept = jotdo::keep_unsaved(text);
                     throw std::runtime_error(std::string(e.what()) + "; not saved, your text is in " + kept.string());
                 }
-            } else {
-                t.title = title;
+                try {
+                    reminders.save(t, reminders.list_named(list), now);
+                } catch (const std::exception& e) {
+                    auto kept = jotdo::keep_unsaved(text);
+                    throw std::runtime_error(std::string(e.what()) + "; not saved, your text is in " + kept.string());
+                }
+                report("added", t);
+                return 0;
             }
+            t.title = title;
             reminders.save(t, reminders.list_named(list), now);
             report("added", t);
             return 0;
