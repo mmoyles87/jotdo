@@ -24,6 +24,7 @@ struct Config {
     std::string default_account;
     bool mouse = true;     // clicks and the wheel; false keeps the terminal's own selection
     int agenda_days = 7;   // how far ahead the agenda looks
+    bool twelve_hour = true;  // clock = "12h" (9:00 AM) or "24h" (09:00)
     std::string theme_preset = "forest";
     std::map<std::string, std::string> theme_colors;  // [theme] keys other than preset
     std::map<std::string, Account> accounts;

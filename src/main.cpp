@@ -222,7 +222,7 @@ void print_task(size_t n, const jotdo::Task& t, std::time_t now, bool show_list)
     if (!t.notes.empty())
         marks += " …";
     std::string where = show_list ? "  · " + t.list : "";
-    std::printf("%3zu  %s  %s  %s%s%s\n", n, t.done ? "✓" : "○", pad(due, 15).c_str(), t.title.c_str(), marks.c_str(),
+    std::printf("%3zu  %s  %s  %s%s%s\n", n, t.done ? "✓" : "○", pad(due, 18).c_str(), t.title.c_str(), marks.c_str(),
                 where.c_str());
 }
 
@@ -244,11 +244,7 @@ void print_full(const jotdo::Task& t, std::time_t now) {
 }
 
 std::string clock(std::time_t t) {
-    char buf[16];
-    std::tm tm{};
-    localtime_r(&t, &tm);
-    std::strftime(buf, sizeof buf, "%H:%M", &tm);
-    return buf;
+    return jotdo::format_time(t);
 }
 
 std::string day_heading(std::time_t day, std::time_t now) {
@@ -289,7 +285,7 @@ int agenda(jotdo::Reminders& r, int days, std::time_t now, bool json) {
     std::map<std::time_t, std::vector<std::string>> by_day;
     for (auto& e : events) {
         std::time_t day = jotdo::local_midnight(std::max(e.start, from));
-        std::string when = e.all_day ? pad("all day", 13) : pad(clock(e.start) + "–" + clock(e.end), 13);
+        std::string when = e.all_day ? pad("all day", 17) : pad(jotdo::format_span(e.start, e.end), 17);
         by_day[day].push_back("  " + when + "  " + e.title + (e.calendar.empty() ? "" : "  · " + e.calendar));
     }
     for (size_t i = 0; i < tasks.size(); ++i) {
@@ -300,7 +296,7 @@ int agenda(jotdo::Reminders& r, int days, std::time_t now, bool json) {
         if (day < from)
             day = from;  // overdue: shown today
         std::string when = t.due->has_time && t.due->t >= from ? clock(t.due->t) : (t.due->t < from ? "overdue" : "");
-        by_day[day].push_back("  ○ " + pad(when, 11) + "  " + t.title + "  · " + t.list + "  [" + std::to_string(i + 1) + "]");
+        by_day[day].push_back("  ○ " + pad(when, 15) + "  " + t.title + "  · " + t.list + "  [" + std::to_string(i + 1) + "]");
     }
     if (by_day.empty())
         std::printf("nothing in the next %d days\n", days);
@@ -494,6 +490,7 @@ int main(int argc, char** argv) {
 
     try {
         auto config = jotdo::Config::load(jotdo::Config::default_path());
+        jotdo::set_clock(config.twelve_hour);
         const jotdo::Account& acc = config.account(account);
         if (args.empty()) {
             if (json)
@@ -708,10 +705,9 @@ int main(int argc, char** argv) {
                 if (json) {
                     out += (i ? "," : "") + json_event(e, i + 1);
                 } else {
-                    std::string when = jotdo::format_due({e.start, !e.all_day}, now);
-                    if (!e.all_day)
-                        when += "–" + clock(e.end);
-                    std::printf("%3zu  %s  %s%s  · %s  [%s]\n", i + 1, pad(when, 22).c_str(), e.title.c_str(),
+                    std::string when = e.all_day ? jotdo::format_due({e.start, false}, now)
+                                                 : jotdo::format_due({e.start, false}, now) + " " + jotdo::format_span(e.start, e.end);
+                    std::printf("%3zu  %s  %s%s  · %s  [%s]\n", i + 1, pad(when, 26).c_str(), e.title.c_str(),
                                 e.recurring ? " ↻" : "", e.calendar.c_str(), e.uid.substr(0, 8).c_str());
                 }
             }
@@ -727,9 +723,8 @@ int main(int argc, char** argv) {
                 if (json) {
                     std::printf("{\"result\":%s,\"event\":%s}\n", quote(verb).c_str(), json_event(e).c_str());
                 } else {
-                    std::string when = jotdo::format_due({e.start, !e.all_day}, now);
-                    if (!e.all_day)
-                        when += "–" + clock(e.end);
+                    std::string when = e.all_day ? jotdo::format_due({e.start, false}, now)
+                                                 : jotdo::format_due({e.start, false}, now) + " " + jotdo::format_span(e.start, e.end);
                     std::printf("%s: %s  %s · %s\n", verb, e.title.c_str(), when.c_str(), e.calendar.c_str());
                 }
             };

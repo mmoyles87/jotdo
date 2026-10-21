@@ -38,6 +38,7 @@ Run the tests with `ctest --test-dir build`.
 ```toml
 default = "home"
 agenda_days = 7                                      # how far ahead the agenda looks
+clock = "12h"                                        # "12h" (9:00 AM) or "24h" (09:00)
 mouse = true                                         # false: keep the terminal's own text selection
 
 [accounts.home]

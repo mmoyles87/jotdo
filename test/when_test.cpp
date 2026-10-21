@@ -65,14 +65,29 @@ TEST(ParseDue, Rejects) {
 }
 
 TEST(FormatDue, Relative) {
+    set_clock(false);
     EXPECT_EQ(format_due(moment(2026, 10, 21, 9), NOW), "Today 09:00");
     EXPECT_EQ(format_due(day(2026, 10, 22), NOW), "Tomorrow");
     EXPECT_EQ(format_due(moment(2026, 10, 26, 8), NOW), "Mon 08:00");
     EXPECT_EQ(format_due(day(2026, 11, 14), NOW), "Nov 14");
-    EXPECT_EQ(format_due(day(2027, 2, 1), NOW), "Feb 01 2027");
+    EXPECT_EQ(format_due(day(2027, 2, 1), NOW), "Feb 1 2027");
     EXPECT_EQ(format_due_exact(moment(2026, 10, 24, 18)), "2026-10-24 18:00");
     EXPECT_TRUE(is_overdue(moment(2026, 10, 21, 9), NOW));
     EXPECT_FALSE(is_overdue(day(2026, 10, 21), NOW));  // a day is not late until it is over
+}
+
+TEST(FormatDue, TwelveHour) {
+    set_clock(true);
+    EXPECT_EQ(format_due(moment(2026, 10, 21, 9), NOW), "Today 9:00 AM");
+    EXPECT_EQ(format_due(moment(2026, 10, 26, 20, 5), NOW), "Mon 8:05 PM");
+    EXPECT_EQ(format_time(at(2026, 10, 21, 0, 30)), "12:30 AM");
+    EXPECT_EQ(format_time(at(2026, 10, 21, 12)), "12:00 PM");
+    EXPECT_EQ(format_span(at(2026, 10, 21, 9), at(2026, 10, 21, 10, 30)), "9:00–10:30 AM");
+    EXPECT_EQ(format_span(at(2026, 10, 21, 11, 30), at(2026, 10, 21, 13)), "11:30 AM–1:00 PM");
+    EXPECT_EQ(format_due_exact(moment(2026, 10, 24, 18)), "2026-10-24 6:00 PM");
+    EXPECT_EQ(parse_due(format_due_exact(moment(2026, 10, 24, 18)), NOW), moment(2026, 10, 24, 18));  // reads its own output
+    set_clock(false);
+    EXPECT_EQ(format_span(at(2026, 10, 21, 9), at(2026, 10, 21, 10, 30)), "09:00–10:30");
 }
 
 TEST(Repeat, RoundTrip) {

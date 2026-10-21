@@ -110,11 +110,7 @@ std::vector<std::string> wrap(const std::string& text, int cols) {
 }
 
 std::string clock(std::time_t t) {
-    char buf[16];
-    std::tm tm{};
-    localtime_r(&t, &tm);
-    std::strftime(buf, sizeof buf, "%H:%M", &tm);
-    return buf;
+    return format_time(t);
 }
 
 std::string day_heading(std::time_t day, std::time_t now) {
@@ -762,10 +758,10 @@ private:
                     row = vbox({text(""), row});
             } else if (r.kind == Row::Event) {
                 const Event& ev = events_[r.index];
-                std::string when = ev.all_day ? "all day" : clock(ev.start) + "–" + clock(ev.end);
+                std::string when = ev.all_day ? "all day" : format_span(ev.start, ev.end);
                 std::string right = ev.calendar;
-                int room = width - 18 - string_width(right) - 2;
-                row = hbox({text("   " + when) | color(T.muted) | size(WIDTH, EQUAL, 17), text(" "),
+                int room = width - 22 - string_width(right) - 2;
+                row = hbox({text("   " + when) | color(T.muted) | size(WIDTH, EQUAL, 21), text(" "),
                             text(fit(ev.title, room)) | color(T.text), filler(), text(right + " ") | color(T.muted)});
             } else {
                 const Task& t = tasks_[r.index];
@@ -824,8 +820,9 @@ private:
             for (auto& l : wrap(ev->title, width))
                 rows.push_back(text(" " + l) | bold | color(T.accent));
             rows.push_back(text(""));
-            std::string day = format_due({ev->start, !ev->all_day}, now);
-            rows.push_back(field("When", ev->all_day ? day + ", all day" : day + "–" + clock(ev->end), T.text));
+            rows.push_back(field("When", ev->all_day ? format_due({ev->start, false}, now) + ", all day"
+                                                  : format_due({ev->start, false}, now) + " " + format_span(ev->start, ev->end),
+                                 T.text));
             if (!ev->location.empty())
                 rows.push_back(field("Where", fit(ev->location, width - 10), T.text));
             rows.push_back(field("Calendar", ev->calendar, T.link));

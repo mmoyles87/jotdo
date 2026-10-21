@@ -19,6 +19,7 @@ const std::time_t NOW = at(2026, 10, 21, 10, 30);
 }  // namespace
 
 TEST(Form, RoundTrip) {
+    set_clock(false);
     Task t;
     t.title = "Call the dentist";
     t.due = Due{at(2026, 10, 22, 9), true};
@@ -41,6 +42,20 @@ TEST(Form, RoundTrip) {
     EXPECT_EQ(back.priority, 1);
     EXPECT_EQ(back.notes, t.notes);
     EXPECT_EQ(back_list, "Personal");
+}
+
+TEST(Form, TwelveHourRoundTrip) {
+    set_clock(true);
+    Task t;
+    t.title = "Dinner";
+    t.due = Due{at(2026, 10, 24, 18, 30), true};
+    std::string list = "Personal";
+    std::string text = form_text(t, list);
+    EXPECT_NE(text.find("due: 2026-10-24 6:30 PM\n"), std::string::npos) << text;
+    Task back;
+    apply_form(text, back, list, NOW);
+    EXPECT_EQ(back.due, t.due);
+    set_clock(false);
 }
 
 TEST(Form, NaturalValuesAndBlanks) {

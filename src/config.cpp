@@ -53,6 +53,10 @@ Config Config::load(const std::filesystem::path& path) {
     c.default_account = t["default"].value_or(std::string{});
     c.mouse = t["mouse"].value_or(true);
     c.agenda_days = t["agenda_days"].value_or(7);
+    std::string clock = t["clock"].value_or(std::string("12h"));
+    if (clock != "12h" && clock != "24h")
+        throw std::runtime_error(path.string() + ": clock must be \"12h\" or \"24h\"");
+    c.twelve_hour = clock == "12h";
     if (c.agenda_days < 1 || c.agenda_days > 366)
         throw std::runtime_error(path.string() + ": agenda_days must be between 1 and 366");
     if (auto* theme = t["theme"].as_table()) {

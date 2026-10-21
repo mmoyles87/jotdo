@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdio>
 #include <cmath>
 #include <map>
 #include <sstream>
@@ -263,6 +264,34 @@ std::optional<Due> parse_due(const std::string& input, std::time_t now) {
     return Due{make(tm.tm_year + 1900, tm.tm_mon, tm.tm_mday, minutes / 60, minutes % 60), true};
 }
 
+namespace {
+bool twelve_hour_clock = true;
+}
+
+void set_clock(bool twelve_hour) {
+    twelve_hour_clock = twelve_hour;
+}
+
+std::string format_time(std::time_t t) {
+    std::tm tm = local(t);
+    char buf[16];
+    if (!twelve_hour_clock) {
+        std::snprintf(buf, sizeof buf, "%02d:%02d", tm.tm_hour, tm.tm_min);
+        return buf;
+    }
+    int h = tm.tm_hour % 12 == 0 ? 12 : tm.tm_hour % 12;
+    std::snprintf(buf, sizeof buf, "%d:%02d %s", h, tm.tm_min, tm.tm_hour < 12 ? "AM" : "PM");
+    return buf;
+}
+
+std::string format_span(std::time_t start, std::time_t end) {
+    std::string a = format_time(start), b = format_time(end);
+    if (twelve_hour_clock && a.size() > 3 && b.size() > 3 && a.substr(a.size() - 2) == b.substr(b.size() - 2) &&
+        local_midnight(start) == local_midnight(end))
+        a.resize(a.size() - 3);  // 9:00–10:30 AM
+    return a + "–" + b;
+}
+
 std::string format_due(const Due& d, std::time_t now) {
     std::tm tm = local(d.t), n = local(now);
     std::time_t day = local_midnight(d.t), today = local_midnight(now);
@@ -279,20 +308,21 @@ std::string format_due(const Due& d, std::time_t now) {
         std::strftime(buf, sizeof buf, "%a", &tm);
         date = buf;
     } else {
-        std::strftime(buf, sizeof buf, tm.tm_year == n.tm_year ? "%b %d" : "%b %d %Y", &tm);
-        date = buf;
+        std::strftime(buf, sizeof buf, "%b", &tm);
+        date = std::string(buf) + " " + std::to_string(tm.tm_mday);  // Nov 2, not Nov 02
+        if (tm.tm_year != n.tm_year)
+            date += " " + std::to_string(tm.tm_year + 1900);
     }
     if (!d.has_time)
         return date;
-    std::strftime(buf, sizeof buf, "%H:%M", &tm);
-    return date + " " + buf;
+    return date + " " + format_time(d.t);
 }
 
 std::string format_due_exact(const Due& d) {
     std::tm tm = local(d.t);
     char buf[32];
-    std::strftime(buf, sizeof buf, d.has_time ? "%Y-%m-%d %H:%M" : "%Y-%m-%d", &tm);
-    return buf;
+    std::strftime(buf, sizeof buf, "%Y-%m-%d", &tm);
+    return d.has_time ? std::string(buf) + " " + format_time(d.t) : std::string(buf);
 }
 
 bool is_overdue(const Due& d, std::time_t now) {
