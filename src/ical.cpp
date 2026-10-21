@@ -2,6 +2,7 @@
 #include "ical.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -109,7 +110,7 @@ icalproperty* new_time(icalproperty_kind kind, icaltimetype tt) {
 
 // A DUE, DTSTART or DTEND property for `d`: VALUE=DATE for a day, local wall time with TZID
 // otherwise. The VTIMEZONE it names is added to the calendar if it is not there yet.
-icalproperty* time_prop(icalproperty_kind kind, const Due& d, icalcomponent* comp) {
+icalproperty* time_prop(icalproperty_kind kind, const Due& d, icalcomponent* comp, icaltimezone* in_zone = nullptr) {
     if (!d.has_time) {
         std::tm tm{};
         localtime_r(&d.t, &tm);
@@ -117,7 +118,7 @@ icalproperty* time_prop(icalproperty_kind kind, const Due& d, icalcomponent* com
         tt.year = tm.tm_year + 1900, tt.month = tm.tm_mon + 1, tt.day = tm.tm_mday;
         return new_time(kind, tt);
     }
-    icaltimezone* zone = local_zone();
+    icaltimezone* zone = in_zone ? in_zone : local_zone();
     if (zone == icaltimezone_get_utc_timezone())
         return new_time(kind, icaltime_from_timet_with_zone(d.t, 0, zone));
     icaltimetype tt = icaltime_from_timet_with_zone(d.t, 0, zone);
@@ -126,16 +127,18 @@ icalproperty* time_prop(icalproperty_kind kind, const Due& d, icalcomponent* com
     const char* tzid = icaltimezone_get_tzid(zone);
     icalproperty_add_parameter(p, icalparameter_new_tzid(tzid));
     icalcomponent* cal = calendar_of(comp);
-    if (!icalcomponent_get_timezone(cal, tzid))
+    if (!icalcomponent_get_timezone(cal, tzid) && icaltimezone_get_builtin_timezone(tzid) == zone)
         if (icalcomponent* vtz = icaltimezone_get_component(zone))
             icalcomponent_add_component(cal, icalcomponent_clone(vtz));
     return p;
 }
 
 // -PT15M, -PT1H30M, -P1D: the units phones write, rather than libical's -PT900S.
+// m minutes before the due time; a negative m is an alarm after it.
 icaldurationtype minutes_before(int m) {
     icaldurationtype d = icaldurationtype_null_duration();
     d.is_neg = m > 0;
+    m = std::abs(m);
     if (m % 10080 == 0 && m > 0) {
         d.weeks = static_cast<unsigned>(m / 10080);
         return d;
@@ -144,6 +147,18 @@ icaldurationtype minutes_before(int m) {
     d.hours = static_cast<unsigned>(m % 1440 / 60);
     d.minutes = static_cast<unsigned>(m % 60);
     return d;
+}
+
+// The zone a date-time property is written in, if it names one jotdo can use: the built-in
+// zone of that TZID (so it can be written again with its VTIMEZONE). Null for dates, UTC and
+// floating times.
+icaltimezone* zone_of(icalproperty* p) {
+    if (!p)
+        return nullptr;
+    icalparameter* tz = icalproperty_get_first_parameter(p, ICAL_TZID_PARAMETER);
+    if (!tz)
+        return nullptr;
+    return icaltimezone_get_builtin_timezone(icalparameter_get_tzid(tz));
 }
 
 icaltimetype utc_now(std::time_t now) {
@@ -290,16 +305,30 @@ std::string write_task(const Task& t, std::time_t now) {
             icalcomponent_add_property(v, icalproperty_new_url(t.url.c_str()));
     }
 
-    // Dates. DTSTART follows DUE when it was there before or a repeat needs it.
-    bool had_start = icalcomponent_get_first_property(v, ICAL_DTSTART_PROPERTY);
+    // Dates. DTSTART follows DUE when it was there before or a repeat needs it, keeping its
+    // distance (a task that starts at 08:00 and is due at 17:00 still starts 9 hours earlier),
+    // and both stay in the zone they were written in.
+    icalproperty* old_start_prop = icalcomponent_get_first_property(v, ICAL_DTSTART_PROPERTY);
+    bool had_start = old_start_prop;
+    std::optional<Due> old_start = due_of(old_start_prop, v);
+    icaltimezone* zone = zone_of(icalcomponent_get_first_property(v, ICAL_DUE_PROPERTY));
+    if (!zone)
+        zone = zone_of(old_start_prop);
     bool due_changed = !before || before->due != t.due;
     if (due_changed || (!t.repeat.empty() && !had_start)) {
+        std::time_t lead = 0;
+        if (before && before->due && old_start && old_start->has_time == before->due->has_time && old_start->t <= before->due->t)
+            lead = before->due->t - old_start->t;
         remove_all(v, ICAL_DUE_PROPERTY);
         remove_all(v, ICAL_DTSTART_PROPERTY);
         if (t.due) {
-            icalcomponent_add_property(v, time_prop(ICAL_DUE_PROPERTY, *t.due, v));
-            if (had_start || !t.repeat.empty())
-                icalcomponent_add_property(v, time_prop(ICAL_DTSTART_PROPERTY, *t.due, v));
+            icalcomponent_add_property(v, time_prop(ICAL_DUE_PROPERTY, *t.due, v, zone));
+            if (had_start || !t.repeat.empty()) {
+                Due start = *t.due;
+                if (lead)
+                    start.t = start.has_time ? start.t - lead : add_days(start.t, -static_cast<int>(std::lround(lead / 86400.0)));
+                icalcomponent_add_property(v, time_prop(ICAL_DTSTART_PROPERTY, start, v, zone));
+            }
         }
     }
     if (!before || before->repeat != t.repeat) {
@@ -335,7 +364,20 @@ std::string write_task(const Task& t, std::time_t now) {
     }
 
     // Alarms are only rewritten when they changed, so a phone's own alarm metadata survives.
-    bool alarms_changed = !before ? !t.alerts.empty() : before->alerts != t.alerts || (due_changed && !t.alerts.empty());
+    auto before_due = [](const std::vector<int>& a) {
+        std::vector<int> out;
+        for (int m : a)
+            if (m >= 0)
+                out.push_back(m);
+        return out;
+    };
+    std::vector<int> wanted = t.alerts;
+    if (before)  // alarms after the due time are not edited in jotdo: carry them over
+        for (int m : before->alerts)
+            if (m < 0 && std::find(wanted.begin(), wanted.end(), m) == wanted.end())
+                wanted.push_back(m);
+    bool alarms_changed = !before ? !t.alerts.empty()
+                                  : before_due(before->alerts) != before_due(t.alerts) || (due_changed && !wanted.empty());
     if (alarms_changed) {
         std::vector<icalcomponent*> old;
         for (icalcomponent* a = icalcomponent_get_first_component(v, ICAL_VALARM_COMPONENT); a;
@@ -346,7 +388,7 @@ std::string write_task(const Task& t, std::time_t now) {
             icalcomponent_free(a);
         }
         if (t.due)
-            for (int m : t.alerts) {
+            for (int m : wanted) {
                 icalcomponent* a = icalcomponent_new(ICAL_VALARM_COMPONENT);
                 icalcomponent_add_property(a, icalproperty_new_action(ICAL_ACTION_DISPLAY));
                 icalcomponent_add_property(a, icalproperty_new_description("Reminder"));
@@ -380,18 +422,27 @@ bool advance(Task& t) {
     icalrecurrencetype* rule = icalrecurrencetype_new_from_string(t.repeat.c_str());
     if (!rule)
         return false;
-    // Iterate from the series start (DTSTART, else the due date), in local wall time, so
-    // "every Monday 08:00" stays at 08:00 across a daylight-saving change.
+    // Iterate the series from its start (DTSTART, else the due date) in the zone it is written
+    // in, so "every Monday 08:00" stays at 08:00 there across daylight-saving changes.
     Due start = *t.due;
+    icaltimezone* zone = nullptr;
     if (!t.raw.empty()) {
         Comp cal = parse(t.raw);
-        if (icalcomponent* v = icalcomponent_get_first_component(cal.get(), ICAL_VTODO_COMPONENT))
-            if (auto s = due_of(icalcomponent_get_first_property(v, ICAL_DTSTART_PROPERTY), v))
+        if (icalcomponent* v = icalcomponent_get_first_component(cal.get(), ICAL_VTODO_COMPONENT)) {
+            icalproperty* sp = icalcomponent_get_first_property(v, ICAL_DTSTART_PROPERTY);
+            if (auto s = due_of(sp, v))
                 start = *s;
+            zone = zone_of(sp);
+            if (!zone)
+                zone = zone_of(icalcomponent_get_first_property(v, ICAL_DUE_PROPERTY));
+        }
     }
+    if (!zone)
+        zone = local_zone();
+    std::time_t lead = t.due->t - start.t;  // the due date's distance after the start
     icaltimetype dtstart;
     if (start.has_time) {
-        dtstart = icaltime_from_timet_with_zone(start.t, 0, local_zone());
+        dtstart = icaltime_from_timet_with_zone(start.t, 0, zone);
     } else {
         std::tm tm{};
         localtime_r(&start.t, &tm);
@@ -410,11 +461,12 @@ bool advance(Task& t) {
             break;
         Due d;
         if (start.has_time)
-            d = {static_cast<std::time_t>(icaltime_as_timet_with_zone(n, local_zone())), true};
+            d = {static_cast<std::time_t>(icaltime_as_timet_with_zone(n, zone)), true};
         else
             d = {make_local(n.year, n.month - 1, n.day), false};
-        if (d.t > t.due->t) {
-            next = d;
+        std::time_t due_at = d.has_time ? d.t + lead : add_days(d.t, static_cast<int>(std::lround(lead / 86400.0)));
+        if (due_at > t.due->t) {
+            next = Due{due_at, t.due->has_time};
             break;
         }
         ++used;

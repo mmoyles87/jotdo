@@ -215,3 +215,48 @@ TEST(Advance, CountSurvivesSaving) {
     t = *parse_task(t.raw);
     EXPECT_FALSE(advance(t)) << "the second occurrence was the last";
 }
+
+TEST(Task, MovingTheDueDateKeepsTheStartsLead) {
+    const char* ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:lead-1\r\nSUMMARY:Report\r\n"
+                      "DTSTART;TZID=America/New_York:20261022T080000\r\nDUE;TZID=America/New_York:20261022T170000\r\n"
+                      "END:VTODO\r\nEND:VCALENDAR\r\n";
+    auto t = parse_task(ics);
+    t->due = Due{at(2026, 10, 23, 17), true};
+    std::string out = write_task(*t, NOW);
+    EXPECT_NE(out.find("DTSTART;TZID=America/New_York:20261023T080000"), std::string::npos) << out;
+    EXPECT_NE(out.find("DUE;TZID=America/New_York:20261023T170000"), std::string::npos);
+}
+
+TEST(Advance, RepeatsInTheReminderOwnZone) {
+    // Weekly at 09:00 London. The UK leaves summer time on Oct 25, a week before New York.
+    const char* ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:london-1\r\nSUMMARY:Call\r\n"
+                      "DTSTART;TZID=Europe/London:20261019T090000\r\nDUE;TZID=Europe/London:20261019T090000\r\n"
+                      "RRULE:FREQ=WEEKLY;BYDAY=MO\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+    auto t = parse_task(ics);
+    ASSERT_TRUE(t);
+    EXPECT_EQ(t->due->t, 1792396800);  // 2026-10-19 08:00 UTC (09:00 BST)
+    ASSERT_TRUE(advance(*t));
+    EXPECT_EQ(t->due->t, 1793005200);  // 2026-10-26 09:00 UTC (09:00 GMT), not 08:00
+    std::string out = write_task(*t, NOW);
+    EXPECT_NE(out.find("DUE;TZID=Europe/London:20261026T090000"), std::string::npos) << out;
+}
+
+TEST(Task, AlarmsAfterTheDueTimeSurviveEdits) {
+    const char* ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:after-1\r\nSUMMARY:Bins\r\n"
+                      "DUE;TZID=America/New_York:20261022T190000\r\n"
+                      "BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER;RELATED=END:PT15M\r\nEND:VALARM\r\n"
+                      "END:VTODO\r\nEND:VCALENDAR\r\n";
+    auto t = parse_task(ics);
+    EXPECT_EQ(t->alerts, (std::vector<int>{-15}));
+    EXPECT_EQ(describe_alerts(t->alerts), "");  // not offered for editing
+    t->title = "Bins out";
+    t->alerts = {};  // what the form gives back
+    std::string out = write_task(*t, NOW);
+    EXPECT_NE(out.find("TRIGGER;RELATED=END:PT15M"), std::string::npos) << out;
+    t = parse_task(out);
+    t->due = Due{at(2026, 10, 23, 19), true};  // a due change rewrites the alarms: the after-due one stays
+    t->alerts = {60};
+    out = write_task(*t, NOW);
+    EXPECT_NE(out.find("PT15M"), std::string::npos) << out;
+    EXPECT_NE(out.find("-PT1H"), std::string::npos);
+}
