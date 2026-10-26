@@ -26,6 +26,46 @@ struct CompFree {
 };
 using Comp = std::unique_ptr<icalcomponent, CompFree>;
 
+#if ICAL_MAJOR_VERSION < 4  // libical 3, as Debian, Ubuntu and Fedora ship it
+icalcomponent* icalcomponent_clone(icalcomponent* c) { return icalcomponent_new_clone(c); }
+int icaldurationtype_as_seconds(icaldurationtype d) { return icaldurationtype_as_int(d); }
+#endif
+
+// A parsed RRULE, false when it does not parse. libical 4 reference-counts rules; libical 3
+// passes them by value.
+class Rule {
+public:
+    explicit Rule(const std::string& s) {
+#if ICAL_MAJOR_VERSION >= 4
+        r_ = icalrecurrencetype_new_from_string(s.c_str());
+        ok_ = r_ != nullptr;
+#else
+        r_ = icalrecurrencetype_from_string(s.c_str());
+        ok_ = r_.freq != ICAL_NO_RECURRENCE;
+#endif
+    }
+    ~Rule() {
+#if ICAL_MAJOR_VERSION >= 4
+        if (r_)
+            icalrecurrencetype_unref(r_);
+#endif
+    }
+    Rule(const Rule&) = delete;
+    Rule& operator=(const Rule&) = delete;
+
+    explicit operator bool() const { return ok_; }
+    icalproperty* property() const { return icalproperty_new_rrule(r_); }
+    icalrecur_iterator* iterate(icaltimetype start) const { return icalrecur_iterator_new(r_, start); }
+
+private:
+#if ICAL_MAJOR_VERSION >= 4
+    icalrecurrencetype* r_ = nullptr;
+#else
+    icalrecurrencetype r_{};
+#endif
+    bool ok_ = false;
+};
+
 Comp parse(const std::string& ics) {
     init();
     Comp c(icalparser_parse_string(ics.c_str()));
@@ -124,12 +164,19 @@ icalproperty* time_prop(icalproperty_kind kind, const Due& d, icalcomponent* com
     icaltimetype tt = icaltime_from_timet_with_zone(d.t, 0, zone);
     tt.zone = nullptr;  // written as wall time plus the TZID parameter
     icalproperty* p = new_time(kind, tt);
-    const char* tzid = icaltimezone_get_tzid(zone);
-    icalproperty_add_parameter(p, icalparameter_new_tzid(tzid));
+    // The zone's location, America/New_York, as phones write it: libical 3 names zones from the
+    // system database /freeassociation.sourceforge.net/America/New_York whatever the prefix.
+    const char* location = icaltimezone_get_location(zone);
+    std::string tzid = location && *location ? location : icaltimezone_get_tzid(zone);
+    icalproperty_add_parameter(p, icalparameter_new_tzid(tzid.c_str()));
     icalcomponent* cal = calendar_of(comp);
-    if (!icalcomponent_get_timezone(cal, tzid) && icaltimezone_get_builtin_timezone(tzid) == zone)
-        if (icalcomponent* vtz = icaltimezone_get_component(zone))
-            icalcomponent_add_component(cal, icalcomponent_clone(vtz));
+    if (!icalcomponent_get_timezone(cal, tzid.c_str()) && icaltimezone_get_builtin_timezone(tzid.c_str()) == zone)
+        if (icalcomponent* vtz = icaltimezone_get_component(zone)) {
+            icalcomponent* copy = icalcomponent_clone(vtz);
+            if (icalproperty* id = icalcomponent_get_first_property(copy, ICAL_TZID_PROPERTY))
+                icalproperty_set_tzid(id, tzid.c_str());
+            icalcomponent_add_component(cal, copy);
+        }
     return p;
 }
 
@@ -336,11 +383,10 @@ std::string write_task(const Task& t, std::time_t now) {
         if (!t.repeat.empty()) {
             if (!t.due)
                 throw std::invalid_argument("a repeating reminder needs a due date");
-            icalrecurrencetype* r = icalrecurrencetype_new_from_string(t.repeat.c_str());
+            Rule r(t.repeat);
             if (!r)
                 throw std::invalid_argument("not a repeat rule: " + t.repeat);
-            icalcomponent_add_property(v, icalproperty_new_rrule(r));
-            icalrecurrencetype_unref(r);
+            icalcomponent_add_property(v, r.property());
         }
     }
 
@@ -419,7 +465,7 @@ bool advance(Task& t) {
     if (t.repeat.empty() || !t.due)
         return false;
     init();
-    icalrecurrencetype* rule = icalrecurrencetype_new_from_string(t.repeat.c_str());
+    Rule rule(t.repeat);
     if (!rule)
         return false;
     // Iterate the series from its start (DTSTART, else the due date) in the zone it is written
@@ -446,11 +492,13 @@ bool advance(Task& t) {
     } else {
         std::tm tm{};
         localtime_r(&start.t, &tm);
-        dtstart = icaltime_null_date();
+        // not icaltime_null_date(): libical 3 repeats the first occurrence of a series whose
+        // start has its time fields at -1
+        dtstart = icaltime_null_time();
+        dtstart.is_date = 1;
         dtstart.year = tm.tm_year + 1900, dtstart.month = tm.tm_mon + 1, dtstart.day = tm.tm_mday;
     }
-    icalrecur_iterator* it = icalrecur_iterator_new(rule, dtstart);
-    icalrecurrencetype_unref(rule);
+    icalrecur_iterator* it = rule.iterate(dtstart);
     if (!it)
         return false;
     std::optional<Due> next;
@@ -614,11 +662,10 @@ std::string write_event(const Event& e, std::time_t now) {
     if (!before || before->repeat != e.repeat) {
         remove_all(v, ICAL_RRULE_PROPERTY);
         if (!e.repeat.empty()) {
-            icalrecurrencetype* r = icalrecurrencetype_new_from_string(e.repeat.c_str());
+            Rule r(e.repeat);
             if (!r)
                 throw std::invalid_argument("not a repeat rule: " + e.repeat);
-            icalcomponent_add_property(v, icalproperty_new_rrule(r));
-            icalrecurrencetype_unref(r);
+            icalcomponent_add_property(v, r.property());
         }
     }
     if (!before ? !e.alerts.empty() : before->alerts != e.alerts) {
