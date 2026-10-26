@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# A local CalDAV server with sample reminders, for trying jotdo without an account.
+#
+#   tools/demo/demo up     start the server (Docker), seed it, write a jotdo config
+#   tools/demo/demo down   stop and remove the server and its files
+#
+# After `up`, run jotdo against it with the XDG_CONFIG_HOME it prints.
+set -euo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+state=${JOTDO_DEMO_DIR:-${XDG_RUNTIME_DIR:-/tmp}/jotdo-demo}
+name=jotdo-demo
+port=${JOTDO_DEMO_PORT:-15232}
+image=kozea/radicale:3.8.3
+
+case ${1:-} in
+  up)
+    docker rm -f "$name" >/dev/null 2>&1 || true
+    mkdir -p "$state/config/jotdo"
+    # any user name and password; the data lives in the container and goes with it
+    docker run -d --name "$name" -p "127.0.0.1:$port:5232" "$image" \
+      --hosts 0.0.0.0:5232 --auth-type none >/dev/null
+    for _ in $(seq 50); do
+      python3 -c "import socket; socket.create_connection(('127.0.0.1', $port), 1)" 2>/dev/null && break
+      sleep 0.2
+    done
+    sleep 1
+    python3 "$here/seed.py" "http://127.0.0.1:$port" demo
+    cat > "$state/config/jotdo/config.toml" <<EOF
+default = "demo"
+
+[accounts.demo]
+url = "http://127.0.0.1:$port"
+user = "demo"
+password_command = "echo demo"
+default_list = "Personal"
+default_calendar = "Home"
+lists = ["Personal", "Family", "Groceries"]
+EOF
+    echo "ready: XDG_CONFIG_HOME=$state/config jotdo"
+    ;;
+  down)
+    docker rm -f "$name" >/dev/null 2>&1 || true
+    rm -rf "$state"
+    echo "removed"
+    ;;
+  *)
+    sed -n '2,8s/^# \{0,1\}//p' "$0"
+    exit 2
+    ;;
+esac

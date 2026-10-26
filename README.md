@@ -8,6 +8,8 @@ as ordinary reminder lists, and Tasks.org or jtx Board do the same on Android th
 jotdo reads and writes those lists directly: no sync service, nothing to run on the server, and
 a phone sees an edit made in jotdo as an edit.
 
+![jotdo showing scheduled reminders, one selected](doc/screenshot.png)
+
 - Browse lists, Today, Scheduled and an agenda of the coming days in a terminal UI; tick
   reminders off with the space bar or a click.
 - Due dates and times, repeats, alerts, priority and notes, typed the way you would say them:
@@ -96,6 +98,17 @@ the account's own.
 
 `password_command` runs through `/bin/sh`, so `pass`, `secret-tool`,
 `security find-internet-password -w` or `op read` all work.
+
+## Try it with sample reminders
+
+`tools/demo/demo up` starts a throwaway CalDAV server (Radicale) in Docker, fills it with sample
+lists, reminders and events, and writes a config for it (it needs Docker and Python 3):
+
+```sh
+tools/demo/demo up
+XDG_CONFIG_HOME=$XDG_RUNTIME_DIR/jotdo-demo/config jotdo
+tools/demo/demo down
+```
 
 ## Use
 
