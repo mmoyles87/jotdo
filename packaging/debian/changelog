@@ -1,3 +1,10 @@
+jotdo (0.1.1-1) unstable; urgency=medium
+
+  * The selected reminder is drawn in the selected-text colour throughout;
+    day headings read Nov 4, not Nov 04.
+
+ -- Matt Moyles <matt@mattmoyles.com>  Mon, 26 Oct 2026 18:00:00 -0400
+
 jotdo (0.1.0-1) unstable; urgency=medium
 
   * Initial release.

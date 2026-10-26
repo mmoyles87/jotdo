@@ -2,7 +2,7 @@
 %global toml_version 3.4.0
 
 Name:           jotdo
-Version:        0.1.0
+Version:        0.1.1
 Release:        1%{?dist}
 Summary:        Reminders from your CalDAV server, in a terminal
 License:        GPL-3.0-or-later AND MIT
@@ -58,5 +58,8 @@ tar xf %{SOURCE2}
 %{_mandir}/man1/jotdo.1*
 
 %changelog
+* Mon Oct 26 2026 Matt Moyles <matt@mattmoyles.com> - 0.1.1-1
+- The selected reminder is drawn in the selected-text colour throughout; day headings read Nov 4, not Nov 04.
+
 * Mon Oct 26 2026 Matt Moyles <matt@mattmoyles.com> - 0.1.0-1
 - Initial release

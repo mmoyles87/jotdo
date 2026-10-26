@@ -45,8 +45,8 @@ sudo apt install jotdo
 **Debian** 13 and later:
 
 ```sh
-curl -LO https://github.com/mmoyles87/jotdo/releases/download/v0.1.0/jotdo_0.1.0-1_amd64.deb
-sudo apt install ./jotdo_0.1.0-1_amd64.deb
+curl -LO https://github.com/mmoyles87/jotdo/releases/download/v0.1.1/jotdo_0.1.1-1_amd64.deb
+sudo apt install ./jotdo_0.1.1-1_amd64.deb
 ```
 
 **Fedora** ([COPR](https://copr.fedorainfracloud.org/coprs/mmoyles87/jotdo/)):
