@@ -30,6 +30,8 @@ image=ubuntu:24.04
 
 mkdir -p "$out"
 "$root/packaging/debsrc.sh" "$version" "$out/src"
+# dput looks for the orig tarballs next to the .changes files
+cp "$out/src/${name}_$version".orig*.tar.gz "$out/"
 
 for s in $series; do
     rev="$version-1~${s}${ppa_rev}"
