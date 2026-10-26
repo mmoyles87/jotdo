@@ -117,9 +117,10 @@ std::string day_heading(std::time_t day, std::time_t now) {
     char buf[32];
     std::tm tm{};
     localtime_r(&day, &tm);
-    std::strftime(buf, sizeof buf, "%A %b %d", &tm);
+    std::strftime(buf, sizeof buf, "%A %b", &tm);
+    std::string date = std::string(buf) + " " + std::to_string(tm.tm_mday);  // Nov 2, not Nov 02
     std::string rel = format_due({day, false}, now);
-    return rel == "Today" || rel == "Tomorrow" ? rel + " · " + buf : buf;
+    return rel == "Today" || rel == "Tomorrow" ? rel + " · " + date : date;
 }
 
 enum class View { Today, Scheduled, All, List, Agenda };
@@ -765,6 +766,10 @@ private:
         for (size_t k = 0; k < rows_.size(); ++k) {
             const Row& r = rows_[k];
             bool sel = static_cast<int>(k) == row_sel_;
+            // On the selected row's accent background every span takes the selected-text colour: an
+            // outer color() does not override the spans' own.
+            bool on_accent = sel && !side_focus_ && r.kind != Row::Heading;
+            auto fg = [&](Color c) { return color(on_accent ? T.selected_text : c); };
             Element row;
             if (r.kind == Row::Heading) {
                 row = text(" " + r.text) | bold | color(r.text == "Overdue" ? Color(Color::RedLight) : T.accent);
@@ -775,8 +780,8 @@ private:
                 std::string when = ev.all_day ? "all day" : format_span(ev.start, ev.end);
                 std::string right = ev.calendar;
                 int room = width - 22 - string_width(right) - 2;
-                row = hbox({text("   " + when) | color(T.muted) | size(WIDTH, EQUAL, 21), text(" "),
-                            text(fit(ev.title, room)) | color(T.text), filler(), text(right + " ") | color(T.muted)});
+                row = hbox({text("   " + when) | fg(T.muted) | size(WIDTH, EQUAL, 21), text(" "),
+                            text(fit(ev.title, room)) | fg(T.text), filler(), text(right + " ") | fg(T.muted)});
             } else {
                 const Task& t = tasks_[r.index];
                 std::string due;
@@ -797,19 +802,16 @@ private:
                 std::string where = many && side().view != View::List ? t.list : "";
                 int right = string_width(due) + string_width(where) + 4;
                 int room = width - 4 - string_width(marks) - right;
-                Element circle = text(t.done ? " ● " : " ○ ") | color(t.done ? T.muted : T.accent);
-                Element title = text(fit(t.title, room)) | color(t.done ? T.muted : T.text);
+                Element circle = text(t.done ? " ● " : " ○ ") | fg(t.done ? T.muted : T.accent);
+                Element title = text(fit(t.title, room)) | fg(t.done ? T.muted : T.text);
                 if (t.done)
                     title = title | strikethrough;
-                row = hbox({circle, title, text(marks) | color(T.accent), filler(),
-                            text(due + " ") | color(late ? Color(Color::RedLight) : T.link),
-                            text(where.empty() ? "" : where + " ") | color(T.muted)});
+                row = hbox({circle, title, text(marks) | fg(T.accent), filler(),
+                            text(due + " ") | fg(late ? Color(Color::RedLight) : T.link),
+                            text(where.empty() ? "" : where + " ") | fg(T.muted)});
             }
             if (sel && r.kind != Row::Heading) {
-                row = row | bgcolor(side_focus_ ? T.highlight : T.accent);
-                if (!side_focus_)
-                    row = row | color(T.selected_text);
-                row = row | focus;
+                row = row | bgcolor(side_focus_ ? T.highlight : T.accent) | focus;
             }
             row_boxes_.emplace_back();
             items.push_back(row | reflect(row_boxes_.back()));
