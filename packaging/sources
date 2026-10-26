@@ -1,0 +1,5 @@
+# The dependencies CMake would fetch, for builds without network access (Debian source
+# packages). Keep in step with CMakeLists.txt, the PKGBUILD, the spec and the Homebrew formula.
+# component     url                                                                       sha256
+ftxui           https://github.com/ArthurSonzogni/FTXUI/archive/refs/tags/v7.0.3.tar.gz   e7c62ffe19009759821b4f0f8df7f2a6fb83784c3a9f1477d81f56d3ee723c88
+tomlplusplus    https://github.com/marzer/tomlplusplus/archive/refs/tags/v3.4.0.tar.gz    8517f65938a4faae9ccf8ebb36631a38c1cadfb5efa85d9a72e15b9e97d25155

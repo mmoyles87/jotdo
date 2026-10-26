@@ -1,0 +1,70 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  deb:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    # built on the oldest supported release, so it installs on Ubuntu 24.04+ and Debian 13+
+    container: ubuntu:24.04
+    steps:
+      - run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl dpkg-dev debhelper
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD"
+          version="${GITHUB_REF_NAME#v}"
+          packaging/debsrc.sh "$version" build/deb HEAD
+          cd "build/deb/jotdo-$version"
+          DEBIAN_FRONTEND=noninteractive apt-get build-dep -y -qq .
+          dpkg-buildpackage -b -us -uc
+          mkdir -p ../../../dist && mv ../*.deb ../../../dist/
+          rm -f ../../../dist/*-dbgsym_*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.os }}
+          path: dist/*
+  rpm:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    container: fedora:43
+    steps:
+      - run: dnf install -y -q git rpm-build rpmdevtools 'dnf-command(builddep)'
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD"
+          version="${GITHUB_REF_NAME#v}"
+          spec=packaging/rpm/jotdo.spec
+          src=$(rpm -E %_sourcedir)
+          mkdir -p "$src"
+          git archive --prefix="jotdo-$version/" -o "$src/jotdo-$version.tar.gz" HEAD
+          spectool -g -C "$src" "$spec"   # the bundled dependencies; Source0 is there already
+          dnf builddep -y -q "$spec"
+          rpmbuild -bb "$spec"
+          mkdir -p dist && find "$(rpm -E %_rpmdir)" -name '*.rpm' ! -name '*-debug*' -exec mv {} dist/ \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.os }}
+          path: dist/*
+  release:
+    needs: [deb, rpm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: cd dist && sha256sum * > SHA256SUMS
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "jotdo ${GITHUB_REF_NAME#v}" --generate-notes

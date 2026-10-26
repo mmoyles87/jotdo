@@ -19,6 +19,44 @@ a phone sees an edit made in jotdo as an edit.
 - Scriptable: `list`, `today`, `new`, `set`, `done`, `edit`, `rm`, `agenda` and `event` work without the
   UI, with `--json` output.
 
+## Install
+
+**Arch Linux** (AUR):
+
+```sh
+yay -S jotdo        # or: paru -S jotdo
+```
+
+**macOS** (Homebrew):
+
+```sh
+brew install mmoyles87/tap/jotdo
+```
+
+**Ubuntu** 24.04 and later ([PPA](https://launchpad.net/~mattmoyles/+archive/ubuntu/jotdo)):
+
+```sh
+sudo add-apt-repository ppa:mattmoyles/jotdo
+sudo apt install jotdo
+```
+
+**Debian** 13 and later:
+
+```sh
+curl -LO https://github.com/mmoyles87/jotdo/releases/download/v0.1.0/jotdo_0.1.0-1_amd64.deb
+sudo apt install ./jotdo_0.1.0-1_amd64.deb
+```
+
+**Fedora** ([COPR](https://copr.fedorainfracloud.org/coprs/mmoyles87/jotdo/)):
+
+```sh
+sudo dnf copr enable mmoyles87/jotdo
+sudo dnf install jotdo
+```
+
+ARM64 builds (`arm64.deb`, `aarch64.rpm`) are on the
+[releases page](https://github.com/mmoyles87/jotdo/releases) too.
+
 ## Build
 
 Needs a C++20 compiler, CMake 3.28+, libcurl and libical 4; pugixml is used when

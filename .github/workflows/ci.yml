@@ -1,0 +1,34 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:24.04    # libical 3
+            setup: >-
+              apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq
+              g++ cmake ninja-build git pkgconf libcurl4-openssl-dev libical-dev libpugixml-dev libgtest-dev
+          - image: fedora:latest   # libical 3
+            setup: >-
+              dnf install -y -q gcc-c++ cmake ninja-build git pkgconf
+              libcurl-devel libical-devel pugixml-devel gtest-devel
+          - image: archlinux:latest  # libical 4
+            setup: pacman -Syu --noconfirm --needed base-devel cmake ninja git curl libical pugixml gtest
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    steps:
+      - run: ${{ matrix.setup }}
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror"
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install ninja pkgconf libical pugixml googletest
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure

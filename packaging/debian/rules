@@ -1,0 +1,13 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@ --buildsystem=cmake+ninja
+
+# The dependencies CMake would fetch are unpacked next to debian/ by debsrc.sh.
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+		-DFETCHCONTENT_SOURCE_DIR_FTXUI=$(CURDIR)/ftxui \
+		-DFETCHCONTENT_SOURCE_DIR_TOMLPLUSPLUS=$(CURDIR)/tomlplusplus
