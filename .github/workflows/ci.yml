@@ -21,7 +21,7 @@ jobs:
     steps:
       - run: ${{ matrix.setup }}
       - uses: actions/checkout@v4
-      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror"
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJOTDO_WERROR=ON
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure
   macos:
@@ -29,6 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: brew install ninja pkgconf libical pugixml googletest
-      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - run: |
+          # libical's pkg-config file requires icu-i18n, from the keg-only icu4c
+          export PKG_CONFIG_PATH="$(brew --prefix "$(brew deps libical | grep icu4c)")/lib/pkgconfig"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure

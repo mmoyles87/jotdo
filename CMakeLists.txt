@@ -50,6 +50,11 @@ target_link_libraries(jotdo_core PUBLIC
   tomlplusplus::tomlplusplus CURL::libcurl PkgConfig::ICAL pugixml::pugixml ftxui::screen)
 
 add_executable(jotdo src/main.cpp src/tui.cpp)
+
+option(JOTDO_WERROR "Treat warnings in jotdo's own code as errors" OFF)
+foreach(target jotdo_core jotdo)
+  target_compile_options(${target} PRIVATE -Wall -Wextra $<$<BOOL:${JOTDO_WERROR}>:-Werror>)
+endforeach()
 target_compile_definitions(jotdo PRIVATE JOTDO_VERSION="${PROJECT_VERSION}")
 target_link_libraries(jotdo PRIVATE jotdo_core ftxui::component ftxui::dom ftxui::screen)
 
