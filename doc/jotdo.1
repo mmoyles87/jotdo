@@ -1,0 +1,221 @@
+.TH JOTDO 1 2026-10-26 "jotdo 0.1.0" "User Commands"
+.SH NAME
+jotdo \- reminders from your CalDAV server, in a terminal
+.SH SYNOPSIS
+.B jotdo
+[\fIoptions\fR]
+.br
+.B jotdo
+[\fIoptions\fR] \fIcommand\fR [\fIarguments\fR]
+.SH DESCRIPTION
+A CalDAV server (Nextcloud, Radicale, Ba\(:ikal, Fastmail and most others)
+keeps task lists alongside calendars, and Apple Reminders, Tasks.org and jtx
+Board show them as reminder lists.
+.B jotdo
+reads and writes those lists directly, so a phone sees an edit made in jotdo
+as an edit.
+.PP
+Without a command, jotdo opens a browser with the account's lists, Today,
+Scheduled and an agenda of the coming days. A repeating reminder that is
+ticked off moves to its next date. If a reminder changes on the server while
+it is open, the save is refused and the text is kept.
+.SH COMMANDS
+.TP
+.BR list " [\fIlist\fR]"
+Open reminders, by due date.
+.TP
+.B today
+Reminders due today, and overdue ones.
+.TP
+.BR all " [\fIlist\fR]"
+Open and finished reminders.
+.TP
+.BI show " reminder"
+Print a reminder.
+.TP
+.BR new " [\fIfields\fR] [\fItitle\fR]"
+Add a reminder; without a title, write it in
+.BR $EDITOR .
+.TP
+.BI set " reminder fields"
+Change only the fields given.
+.TP
+.BR edit " \fIreminder\fR [\fIfile\fR]"
+Edit in
+.BR $VISUAL " or " $EDITOR ,
+or replace from
+.IR file .
+.TP
+.BI done " reminder..."
+Tick off.
+.TP
+.BI undone " reminder"
+Tick back on.
+.TP
+.BI rm " reminder"
+Delete.
+.TP
+.BR agenda " [\fIdays\fR]"
+Events and reminders for the coming days.
+.TP
+.B lists
+The account's lists and calendars.
+.TP
+.BR events " [\fIdays\fR]"
+Calendar events for the coming days, numbered.
+.TP
+.BR "event new" " [\fIevent-fields\fR] \fItitle\fR"
+.TQ
+.BI "event show" " event"
+.TQ
+.BI "event set" " event event-fields"
+.TQ
+.BI "event rm" " event"
+Add, print, change and delete calendar events. Deleting a repeating event
+deletes the whole series.
+.PP
+.I reminder
+is a number from
+.BR list ,
+.B today
+or
+.BR all ,
+or the start of a reminder's UID.
+.I event
+is a number from
+.B events
+or the start of an event's UID.
+.SH FIELDS
+For
+.B new
+and
+.BR set :
+.TP
+.BR \-t ", " \-\-title " \fItext\fR"
+(set only)
+.TP
+.BR \-l ", " \-\-list " \fIname\fR"
+Which list.
+.TP
+.BR \-d ", " \-\-due " \fIwhen\fR"
+.BR "tomorrow 9am" ", " fri ", " "oct 24" ", " "2026-10-24 18:00" ", " "in 2h" ;
+.B none
+clears it.
+.TP
+.BR \-r ", " \-\-repeat " \fIrule\fR"
+.BR daily ", " weekdays ", " "every 2 weeks" ", " "every mon, wed" ", " monthly ,
+or an RRULE.
+.TP
+.BR \-A ", " \-\-alert " \fIwhen\fR"
+.BR "at due" ", " "15m before" ", " "1h before" ;
+several with commas.
+.TP
+.BR \-p ", " \-\-priority " \fIlevel\fR"
+.BR high ", " medium ", " low ", " none .
+.TP
+.BR \-n ", " \-\-notes " \fItext\fR"
+.TP
+.BR \-u ", " \-\-url " \fIurl\fR"
+.PP
+For
+.B event new
+and
+.BR "event set" :
+.TP
+.BR \-s ", " \-\-start " \fIwhen\fR"
+As for
+.BR \-\-due ;
+a date alone makes an all-day event.
+.TP
+.BR \-e ", " \-\-end " \fIwhen\fR"
+Read relative to the start.
+.TP
+.BR \-f ", " \-\-for " \fIlength\fR"
+.BR 1h ", " 90m ", " "2 days" .
+.TP
+.BR \-c ", " \-\-calendar " \fIname\fR"
+.TQ
+.BR \-L ", " \-\-location " \fItext\fR"
+.TQ
+.BR \-n ", " \-\-notes " \fItext\fR"
+.TQ
+.BR \-A ", " \-\-alert " \fIwhen\fR"
+.TQ
+.BR \-r ", " \-\-repeat " \fIrule\fR"
+.SH OPTIONS
+.TP
+.BR \-a ", " \-\-account " \fIname\fR"
+An account from the configuration. The default is the configuration's
+.BR default .
+.TP
+.B \-\-json
+Print JSON instead of text, for every command but the browser.
+.TP
+.BR \-h ", " \-\-help
+Print usage and exit.
+.TP
+.BR \-V ", " \-\-version
+Print the version and exit.
+.SH KEYS
+.TP
+.BR j " " k ", arrows"
+Move.
+.TP
+.BR tab ", " h " " l
+Switch between the lists and the reminders.
+.TP
+.BR space ", " x
+Tick off, or back on.
+.TP
+.B a
+Add: a title, and a due date after
+.BR " @" .
+.TP
+.B n
+New reminder in the editor.
+.TP
+.BR enter ", " e
+Edit.
+.TP
+.B d d
+Delete.
+.TP
+.B c
+Show finished reminders.
+.TP
+.B /
+Search;
+.B esc
+clears.
+.TP
+.B r
+Reload.
+.TP
+.B q
+Quit.
+.SH FILES
+.TP
+.I ~/.config/jotdo/config.toml
+Accounts and settings, for example:
+.PP
+.RS
+.nf
+default = "home"
+agenda_days = 7
+clock = "12h"            # or "24h"
+
+[accounts.home]
+url = "https://cloud.example.com"
+user = "me"
+password_command = "pass show cloud/app-password"
+default_list = "Personal"
+# ca_file = "~/certs/my-ca.pem"
+.fi
+.RE
+.PP
+.B password_command
+runs through
+.BR /bin/sh ;
+the first line of its output is the password.
+.SH SEE ALSO
+https://github.com/mmoyles87/jotdo

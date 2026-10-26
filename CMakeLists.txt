@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 project(jotdo VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -16,12 +16,14 @@ find_package(pugixml QUIET)
 FetchContent_Declare(ftxui
   GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
   GIT_TAG v7.0.3
-  GIT_SHALLOW TRUE)
+  GIT_SHALLOW TRUE
+  EXCLUDE_FROM_ALL)
 
 FetchContent_Declare(tomlplusplus
   GIT_REPOSITORY https://github.com/marzer/tomlplusplus
   GIT_TAG v3.4.0
-  GIT_SHALLOW TRUE)
+  GIT_SHALLOW TRUE
+  EXCLUDE_FROM_ALL)
 
 set(FTXUI_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(FTXUI_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -33,7 +35,8 @@ if(NOT pugixml_FOUND)
   FetchContent_Declare(pugixml
     GIT_REPOSITORY https://github.com/zeux/pugixml
     GIT_TAG v1.15
-    GIT_SHALLOW TRUE)
+    GIT_SHALLOW TRUE
+    EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(pugixml)
 endif()
 
@@ -47,9 +50,12 @@ target_link_libraries(jotdo_core PUBLIC
   tomlplusplus::tomlplusplus CURL::libcurl PkgConfig::ICAL pugixml::pugixml ftxui::screen)
 
 add_executable(jotdo src/main.cpp src/tui.cpp)
+target_compile_definitions(jotdo PRIVATE JOTDO_VERSION="${PROJECT_VERSION}")
 target_link_libraries(jotdo PRIVATE jotdo_core ftxui::component ftxui::dom ftxui::screen)
 
-install(TARGETS jotdo RUNTIME DESTINATION bin)
+include(GNUInstallDirs)
+install(TARGETS jotdo RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES doc/jotdo.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
 
 # --- tests --------------------------------------------------------------------
 

@@ -21,7 +21,7 @@ a phone sees an edit made in jotdo as an edit.
 
 ## Build
 
-Needs a C++20 compiler, CMake 3.24+, libcurl and libical 4; pugixml is used when
+Needs a C++20 compiler, CMake 3.28+, libcurl and libical 4; pugixml is used when
 installed and fetched otherwise. FTXUI and toml++ are fetched at configure time.
 
 ```sh

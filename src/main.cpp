@@ -78,6 +78,7 @@ options:
   -a, --account NAME     an account from the config (default: the config's `default`)
   --json                 print JSON instead of text (every command but the browser)
   -h, --help
+  -V, --version
 
 Accounts are read from ~/.config/jotdo/config.toml.
 )";
@@ -475,9 +476,14 @@ int main(int argc, char** argv) {
     bool json = false;
     if (auto it = std::find(args.begin(), args.end(), "--json"); it != args.end())
         json = true, args.erase(it);
-    while (!args.empty() && (args[0] == "-a" || args[0] == "--account" || args[0] == "-h" || args[0] == "--help")) {
+    while (!args.empty() && (args[0] == "-a" || args[0] == "--account" || args[0] == "-h" || args[0] == "--help" ||
+                             args[0] == "-V" || args[0] == "--version")) {
         if (args[0] == "-h" || args[0] == "--help") {
             std::fputs(USAGE, stdout);
+            return 0;
+        }
+        if (args[0] == "-V" || args[0] == "--version") {
+            std::puts("jotdo " JOTDO_VERSION);
             return 0;
         }
         if (args.size() < 2) {
