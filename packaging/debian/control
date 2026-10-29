@@ -1,7 +1,7 @@
 Source: jotdo
 Section: utils
 Priority: optional
-Maintainer: Matt Moyles <matt@mattmoyles.com>
+Maintainer: Matt Moyles <matt@moyles.xyz>
 Build-Depends: debhelper-compat (= 13), cmake (>= 3.28), ninja-build, pkgconf,
  libcurl4-openssl-dev, libical-dev, libpugixml-dev, libgtest-dev
 Standards-Version: 4.6.2

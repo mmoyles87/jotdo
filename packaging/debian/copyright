@@ -1,10 +1,10 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: jotdo
-Upstream-Contact: Matt Moyles <matt@mattmoyles.com>
+Upstream-Contact: Matt Moyles <matt@moyles.xyz>
 Source: https://github.com/mmoyles87/jotdo
 
 Files: *
-Copyright: 2026 Matt Moyles <matt@mattmoyles.com>
+Copyright: 2026 Matt Moyles <matt@moyles.xyz>
 License: GPL-3+
 
 Files: ftxui/*
